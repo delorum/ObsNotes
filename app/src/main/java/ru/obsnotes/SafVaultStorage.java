@@ -8,8 +8,9 @@ import androidx.documentfile.provider.DocumentFile;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.BooleanSupplier;
 
-/** All calls are made on the repository executor. Never creates files or directories. */
+/** All calls run on background executors. Never creates files or directories. */
 public final class SafVaultStorage implements VaultStorage {
   private final Context context;
   private final Uri tree;
@@ -79,6 +80,8 @@ public final class SafVaultStorage implements VaultStorage {
       byte[] buffer = new byte[16384];
       int n;
       while ((n = in.read(buffer)) != -1) {
+        if (Thread.currentThread().isInterrupted())
+          throw new InterruptedIOException("Поиск отменён");
         if (out.size() + n > 16 * 1024 * 1024) throw new IOException("Файл больше 16 МБ");
         out.write(buffer, 0, n);
       }
@@ -97,18 +100,26 @@ public final class SafVaultStorage implements VaultStorage {
 
   public List<String> dailyNotes() throws IOException {
     List<String> list = new ArrayList<>();
-    walk(resolve("Дневник/Хроника"), "Дневник/Хроника", list, 0);
+    visitDailyNotes(() -> false, list::add);
     list.sort(Comparator.comparing(DiaryLayout::fileName).reversed());
     return List.copyOf(list);
   }
 
-  private void walk(Uri directory, String prefix, List<String> result, int depth)
+  @Override
+  public void visitDailyNotes(BooleanSupplier cancelled, NoteVisitor visitor) throws IOException {
+    if (cancelled.getAsBoolean()) return;
+    walk(resolve("Дневник/Хроника"), "Дневник/Хроника", cancelled, visitor, 0);
+  }
+
+  private void walk(
+      Uri directory, String prefix, BooleanSupplier cancelled, NoteVisitor visitor, int depth)
       throws IOException {
-    if (depth > 6) return;
+    if (depth > 6 || cancelled.getAsBoolean()) return;
     for (Entry e : children(directory)) {
+      if (cancelled.getAsBoolean()) return;
       String path = prefix + "/" + e.name;
-      if (e.directory) walk(e.uri, path, result, depth + 1);
-      else if (e.name.matches("\\d{4}-\\d{2}-\\d{2}-[а-я]{2}\\.md")) result.add(path);
+      if (e.directory) walk(e.uri, path, cancelled, visitor, depth + 1);
+      else if (e.name.matches("\\d{4}-\\d{2}-\\d{2}-[а-я]{2}\\.md")) visitor.visit(path);
     }
   }
 }

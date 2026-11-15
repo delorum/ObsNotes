@@ -96,7 +96,8 @@ public final class EditorScreen {
     ui.weighted(
         relations,
         ui.button(
-            Events.id(state.text).isEmpty() ? "Сделать корневым" : "Корневой блок", actions::root));
+            Events.rootId(state.text).isEmpty() ? "Сделать корневым" : "Корневой блок",
+            actions::root));
     ui.weighted(relations, ui.button("Связать", actions::link));
     ui.action(relations, ru.obsnotes.R.drawable.ic_link, "Показать связи", actions::related);
     ui.body.addView(relations);

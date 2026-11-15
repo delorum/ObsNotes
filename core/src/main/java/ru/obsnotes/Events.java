@@ -1,5 +1,6 @@
 package ru.obsnotes;
 
+import java.time.LocalDate;
 import java.util.*;
 import java.util.regex.*;
 
@@ -23,10 +24,54 @@ public final class Events {
     return m.find() ? m.group(1) : "";
   }
 
+  /** A block reference alone is not a relationship root. */
+  public static String rootId(String text) {
+    String normalized = text.replace("\r\n", "\n");
+    int callout = normalized.indexOf("\n> [!");
+    if (callout < 0) return "";
+    String script = normalized.substring(callout).toLowerCase(Locale.ROOT);
+    if (!script.contains("```dataviewjs") || !script.contains("скрипты/dataview/outlinkinfo"))
+      return "";
+    Matcher anchor =
+        Pattern.compile("(?:^|[ \\t])\\^([A-Za-z0-9_-]+)[ \\t]*$")
+            .matcher(normalized.substring(0, callout).stripTrailing());
+    return anchor.find() ? anchor.group(1) : "";
+  }
+
+  public record Parent(String path, String id) {}
+
+  public static Optional<Parent> parent(String source, String text) {
+    String first = text.lines().findFirst().orElse("").strip();
+    Matcher link =
+        Pattern.compile("^\\[\\[([^]|]*)#\\^([A-Za-z0-9_-]+)(?:\\|.*)?]]$").matcher(first);
+    if (!link.matches()) return Optional.empty();
+    String target = link.group(1).replaceFirst("\\.md$", "");
+    if (target.startsWith("/") || Arrays.asList(target.split("/")).contains(".."))
+      return Optional.empty();
+    if (target.isEmpty()) target = source;
+    else if (!target.contains("/") && target.matches("\\d{4}-\\d{2}-\\d{2}-[а-я]{2}")) {
+      try {
+        target = DiaryLayout.path(LocalDate.parse(target.substring(0, 10)));
+      } catch (java.time.format.DateTimeParseException invalid) {
+        return Optional.empty();
+      }
+    } else target += ".md";
+    return Optional.of(new Parent(target, link.group(2)));
+  }
+
+  public static boolean hasRelations(String source, String text) {
+    return !rootId(text).isEmpty() || parent(source, text).isPresent();
+  }
+
+  public static boolean references(String text, String from, String path, String id) {
+    Optional<Parent> parent = parent(from, text);
+    return parent.isPresent() && parent.get().path.equals(path) && parent.get().id.equals(id);
+  }
+
   public static String root(String text) {
     if (text.isBlank()) throw new IllegalArgumentException("Сначала введите текст события");
     String existing = id(text);
-    if (!existing.isEmpty() && text.contains("Скрипты/Dataview/outLinkInfo")) return text;
+    if (!rootId(text).isEmpty()) return text;
     int callout = text.indexOf("\n> [!");
     if (callout >= 0)
       throw new IllegalArgumentException("В блоке уже есть callout; измените его вручную");

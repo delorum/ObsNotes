@@ -23,6 +23,10 @@ public final class MainActivity extends AppCompatActivity {
   private VaultRepository repository;
   private DiaryIndex index = new DiaryIndex();
   private final ExecutorService io = Executors.newSingleThreadExecutor();
+  private final ExecutorService relationIo = Executors.newSingleThreadExecutor();
+  private java.util.concurrent.atomic.AtomicBoolean relationCancelled;
+  private Future<?> relationJob;
+  private RelationsDialog relationsDialog;
   private final Handler handler = new Handler(Looper.getMainLooper());
   private String vault = "", path = "", screen = "day", lastError;
   private LocalDate day = LocalDate.now();
@@ -94,6 +98,9 @@ public final class MainActivity extends AppCompatActivity {
   @Override
   protected void onDestroy() {
     handler.removeCallbacksAndMessages(null);
+    if (relationsDialog != null) relationsDialog.dismiss();
+    cancelRelations();
+    relationIo.shutdownNow();
     io.shutdown();
     super.onDestroy();
   }
@@ -491,29 +498,65 @@ public final class MainActivity extends AppCompatActivity {
                 }));
   }
 
+  private void cancelRelations() {
+    if (relationCancelled != null) relationCancelled.set(true);
+    if (relationJob != null) relationJob.cancel(true);
+  }
+
   private void showRelations() {
-    if (busy) return;
-    String source = editor.sourcePath, text = editor.text;
-    work(
-        () -> index.related(storage, source, text),
-        list -> {
-          if (list.isEmpty()) {
-            ui.error("Связанных сохранённых блоков пока нет");
-            return;
-          }
-          SearchPicker.show(
-              ui,
-              "Связи",
-              list,
-              DiaryIndex.Related::label,
-              false,
-              selected ->
-                  new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                      .setTitle(selected.get(0).block().section().title())
-                      .setMessage(CrossReferences.clean(selected.get(0).block().text()))
-                      .setPositiveButton("Закрыть", null)
-                      .show());
-        });
+    if (busy || editor == null) return;
+    String source = editor.sourcePath, text = editor.text, snapshot = editor.sourceSnapshot;
+    if (!Events.hasRelations(source, text)) {
+      Toast.makeText(this, "У блока нет связей", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    if (relationsDialog != null) relationsDialog.dismiss();
+    cancelRelations();
+    var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+    relationCancelled = cancelled;
+    var dialog =
+        new RelationsDialog(
+            ui,
+            () -> {
+              cancelled.set(true);
+              if (relationCancelled == cancelled && relationJob != null) relationJob.cancel(true);
+            },
+            selected ->
+                new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle(selected.block().section().title())
+                    .setMessage(CrossReferences.clean(selected.block().text()))
+                    .setPositiveButton("Закрыть", null)
+                    .show());
+    relationsDialog = dialog;
+    SafVaultStorage selectedStorage = storage;
+    relationJob =
+        relationIo.submit(
+            () -> {
+              try {
+                RelationSearch.run(
+                    selectedStorage,
+                    source,
+                    text,
+                    snapshot,
+                    () -> cancelled.get() || Thread.currentThread().isInterrupted(),
+                    result ->
+                        runOnUiThread(
+                            () -> {
+                              if (!isDestroyed() && !cancelled.get()) dialog.update(result);
+                            }));
+              } catch (Exception error) {
+                if (!cancelled.get())
+                  runOnUiThread(
+                      () -> {
+                        if (!isDestroyed() && !cancelled.get())
+                          dialog.failed(
+                              "Поиск не завершён: "
+                                  + (error.getMessage() == null
+                                      ? "файл недоступен"
+                                      : error.getMessage()));
+                      });
+              }
+            });
   }
 
   private void saveEditor() {

@@ -15,7 +15,7 @@ public final class DiaryIndex {
     return new Day(path, read(storage, path));
   }
 
-  /** Opening a day must not scan the archive; date lists are requested separately. */
+  /** Opening a day must not scan the archive. */
   public Opened open(VaultStorage storage, LocalDate date) throws IOException {
     Markdown template = TemplateCatalog.parse(storage.read(TemplateCatalog.PATH));
     if (template.section("## Заметки") == null)
@@ -47,34 +47,10 @@ public final class DiaryIndex {
     List<Events.Root> list = new ArrayList<>();
     for (var b : document.blocks) {
       if (b.start() == exceptStart) continue;
-      String id = Events.id(b.text());
+      String id = Events.rootId(b.text());
       if (!id.isEmpty() || !b.text().contains("#^") && !b.text().contains("```"))
         list.add(new Events.Root(path, b, id));
     }
     return List.copyOf(list);
-  }
-
-  public record Related(String path, Markdown.Block block) {
-    public String label() {
-      return DiaryLayout.fileName(path)
-          + " / "
-          + block.section().title()
-          + "\n"
-          + CrossReferences.clean(block.text());
-    }
-  }
-
-  public List<Related> related(VaultStorage storage, String source, String text)
-      throws IOException {
-    String id = Events.id(text);
-    List<Related> result = new ArrayList<>();
-    for (String path : storage.dailyNotes())
-      for (var b : read(storage, path).blocks) {
-        String root = Events.id(b.text());
-        if (!id.isEmpty() && Events.references(b.text(), source, id)
-            || !root.isEmpty() && Events.references(text, path, root))
-          result.add(new Related(path, b));
-      }
-    return List.copyOf(result);
   }
 }
