@@ -268,6 +268,51 @@ public final class EditorState {
     applyRoutes(next, catalog);
   }
 
+  public List<Routing.Choice> replacingRoute(int index, Routing.Choice choice) {
+    List<Routing.Choice> next = new ArrayList<>(routes);
+    next.set(index, choice);
+    return List.copyOf(next);
+  }
+
+  public void replaceRoute(int index, Routing.Choice choice, Routing.Catalog catalog) {
+    applyRoutes(replacingRoute(index, choice), catalog);
+  }
+
+  public void replaceTag(int index, List<String> ids, Routing.Catalog catalog) {
+    Parts p = parts();
+    TaggedText body = TaggedText.parse(editableBody(p));
+    var old = body.tags.get(index);
+    List<String> replacement = new ArrayList<>();
+    if (old.kind().equals("crossPeople"))
+      for (var token : catalog.split(old.ids()))
+        if (token.choice() != null) replacement.add(token.text());
+    replacement.addAll(ids);
+    Set<String> seen = new HashSet<>();
+    replacement.removeIf(id -> !seen.add(id.toLowerCase(Locale.ROOT)));
+    text = joinEditable(p, body.replace(index, replacement).render());
+    if (old.kind().equals("crossPeople")) {
+      List<Routing.Choice> next = new ArrayList<>(routes);
+      for (var tag : tags())
+        if (tag.kind().equals("crossPeople"))
+          for (var token : catalog.split(tag.ids()))
+            if (token.choice() != null
+                && next.stream()
+                    .noneMatch(c -> c.target().heading().equals(token.choice().target().heading())))
+              next.add(token.choice());
+      routes = List.copyOf(next);
+    }
+  }
+
+  /** A conflict copy preserves the visible text, without duplicating anchors or active keys. */
+  public String conflictCopyText() {
+    String value = FieldBlock.labels(TaggedText.parse(parts().body).clean);
+    if (kind == Markdown.Kind.FIELD && !editFields) {
+      var field = Markdown.FIELD.matcher(targetSource);
+      if (field.matches()) return field.group(1) + ": " + value;
+    }
+    return value;
+  }
+
   public String unmanagedCrossIds(TaggedText.Tag tag, Routing.Catalog catalog) {
     if (!tag.kind().equals("crossPeople")) return tag.ids();
     return String.join(

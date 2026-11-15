@@ -37,6 +37,8 @@ public final class MainActivity extends AppCompatActivity {
   private Markdown template = new Markdown(""), document;
   private EditorState editor;
   private boolean busy = false, connected = false;
+  private boolean foreground = false, conflictPending = false;
+  private android.app.Dialog conflictDialog;
   private final Set<String> expanded = new HashSet<>(Set.of("## Заметки"));
   private final Runnable poll =
       new Runnable() {
@@ -85,13 +87,20 @@ public final class MainActivity extends AppCompatActivity {
   @Override
   protected void onResume() {
     super.onResume();
+    foreground = true;
+    if (conflictPending && editor != null) showConflict();
     handler.postDelayed(poll, 1000);
   }
 
   @Override
   protected void onPause() {
+    foreground = false;
     handler.removeCallbacks(poll);
-    if (editor != null && connected && screen.equals("editor") && !busy) saveEditor();
+    if (editor != null
+        && connected
+        && screen.equals("editor")
+        && !busy
+        && (conflictDialog == null || !conflictDialog.isShowing())) saveEditor();
     super.onPause();
   }
 
@@ -105,6 +114,7 @@ public final class MainActivity extends AppCompatActivity {
 
   @Override
   protected void onDestroy() {
+    if (conflictDialog != null) conflictDialog.dismiss();
     handler.removeCallbacksAndMessages(null);
     if (relationsDialog != null) relationsDialog.dismiss();
     cancelRelations();
@@ -144,6 +154,11 @@ public final class MainActivity extends AppCompatActivity {
                   ui.busy(false);
                   lastError = DayNavigation.message(error);
                   ui.error(lastError);
+                  if ((error instanceof VaultRepository.Conflict || DayNavigation.missing(error))
+                      && editor != null) {
+                    conflictPending = true;
+                    if (foreground) showConflict();
+                  }
                 });
           }
         });
@@ -153,7 +168,8 @@ public final class MainActivity extends AppCompatActivity {
       SafVaultStorage storage,
       VaultRepository repository,
       DiaryIndex index,
-      DiaryIndex.Opened opened) {}
+      DiaryIndex.Opened opened,
+      VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
     cancelNavigation();
@@ -167,9 +183,14 @@ public final class MainActivity extends AppCompatActivity {
           VaultRepository r =
               new VaultRepository(
                   s, new FileJournal(new File(getFilesDir(), "journals/" + folder).toPath()));
-          r.recover();
+          VaultRepository.Conflict conflict = null;
+          try {
+            r.recover();
+          } catch (VaultRepository.Conflict changed) {
+            conflict = changed;
+          }
           DiaryIndex next = new DiaryIndex();
-          return new Loaded(s, r, next, next.open(s, day));
+          return new Loaded(s, r, next, next.open(s, day), conflict);
         },
         loaded -> {
           storage = loaded.storage;
@@ -183,6 +204,14 @@ public final class MainActivity extends AppCompatActivity {
           prefs.edit().putString("vault", value).apply();
           if (recovery.load(vault) != null) restoreEditor();
           else showDay();
+          if (loaded.conflict != null) {
+            lastError = loaded.conflict.getMessage();
+            ui.error(lastError);
+            if (editor != null) {
+              conflictPending = true;
+              if (foreground) showConflict();
+            }
+          }
         });
   }
 
@@ -430,6 +459,14 @@ public final class MainActivity extends AppCompatActivity {
             showEditor();
           }
 
+          public void replaceRoute(int index) {
+            pickRouteReplacement(index);
+          }
+
+          public void replaceTag(int index) {
+            pickTagReplacement(index);
+          }
+
           public void today() {
             MainActivity.this.today();
           }
@@ -467,17 +504,7 @@ public final class MainActivity extends AppCompatActivity {
   private void pickTarget() {
     if (busy) return;
     var catalog = editor.routingCatalog(template);
-    List<Routing.Choice> choices =
-        catalog.choices.stream()
-            .filter(c -> !editor.editFields || c.target().kind() == Markdown.Kind.SECTION)
-            .filter(
-                c ->
-                    editor.fresh
-                        || !editor.sourcePath.equals(editor.destinationPath)
-                        || c.target().kind() == Markdown.Kind.SECTION
-                        || c.target().line() < editor.start
-                        || c.target().line() >= editor.end)
-            .collect(java.util.stream.Collectors.toList());
+    List<Routing.Choice> choices = routeChoices(catalog);
     SearchPicker.show(
         ui,
         "Разделы",
@@ -489,6 +516,76 @@ public final class MainActivity extends AppCompatActivity {
         selected -> {
           try {
             editor.applyRoutes(selected, catalog);
+            recovery.save(editor, vault);
+            showEditor();
+          } catch (IllegalArgumentException error) {
+            ui.error(error.getMessage());
+          }
+        });
+  }
+
+  private List<Routing.Choice> routeChoices(Routing.Catalog catalog) {
+    return catalog.choices.stream()
+        .filter(c -> !editor.editFields || c.target().kind() == Markdown.Kind.SECTION)
+        .filter(
+            c ->
+                editor.fresh
+                    || !editor.sourcePath.equals(editor.destinationPath)
+                    || c.target().kind() == Markdown.Kind.SECTION
+                    || c.target().line() < editor.start
+                    || c.target().line() >= editor.end)
+        .collect(java.util.stream.Collectors.toList());
+  }
+
+  private void pickRouteReplacement(int index) {
+    if (busy) return;
+    var catalog = editor.routingCatalog(template);
+    var current = editor.routes.get(index);
+    var choices =
+        routeChoices(catalog).stream()
+            .filter(c -> c.equals(current) || !editor.routes.contains(c))
+            .filter(
+                c ->
+                    index == 0
+                        || c.target().kind() == Markdown.Kind.SECTION && !c.crossId().isEmpty())
+            .collect(java.util.stream.Collectors.toList());
+    SearchPicker.show(
+        ui,
+        index == 0 ? "Основной раздел" : "Дополнительный раздел",
+        choices,
+        catalog::searchLabel,
+        false,
+        List.of(current),
+        selected -> editor.validateRoutes(editor.replacingRoute(index, selected.get(0))),
+        selected -> {
+          editor.replaceRoute(index, selected.get(0), catalog);
+          recovery.save(editor, vault);
+          showEditor();
+        });
+  }
+
+  private void pickTagReplacement(int index) {
+    if (busy) return;
+    var catalog = editor.routingCatalog(template);
+    var tag = editor.tags().get(index);
+    var options = TagChoices.of(template, tag.person(), editor.unmanagedCrossIds(tag, catalog));
+    SearchPicker.show(
+        ui,
+        "Заменить метку",
+        options.items(),
+        d -> d.id() + " · " + d.title(),
+        !tag.person(),
+        options.selected(),
+        ignored -> null,
+        true,
+        selected -> {
+          try {
+            editor.replaceTag(
+                index,
+                selected.stream()
+                    .map(CrossReferences.Destination::id)
+                    .collect(java.util.stream.Collectors.toList()),
+                catalog);
             recovery.save(editor, vault);
             showEditor();
           } catch (IllegalArgumentException error) {
@@ -646,6 +743,36 @@ public final class MainActivity extends AppCompatActivity {
 
   private void saveEditor() {
     saveEditor(null);
+  }
+
+  private void showConflict() {
+    if (editor == null || isDestroyed() || conflictDialog != null && conflictDialog.isShowing())
+      return;
+    conflictPending = false;
+    conflictDialog =
+        ConflictDialog.show(ui, !editor.conflictCopyText().isBlank(), this::resolveConflict);
+  }
+
+  private void resolveConflict(boolean copy) {
+    if (busy || editor == null) return;
+    EditorState form = editor;
+    String selectedVault = vault;
+    work(
+        () -> {
+          var result =
+              ConflictResolution.resolve(
+                  repository, storage, form, template, copy, LocalDateTime.now());
+          recovery.clear(selectedVault);
+          return result;
+        },
+        result -> {
+          editor = null;
+          conflictPending = false;
+          path = result.path();
+          day = LocalDate.parse(DiaryLayout.fileName(path).substring(0, 10));
+          document = result.document();
+          showDay();
+        });
   }
 
   private void saveEditor(Runnable after) {

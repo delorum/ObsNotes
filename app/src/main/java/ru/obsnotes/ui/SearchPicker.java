@@ -34,6 +34,19 @@ public final class SearchPicker {
       List<T> initial,
       Function<List<T>, String> validate,
       Consumer<List<T>> select) {
+    show(ui, title, items, label, multi, initial, validate, false, select);
+  }
+
+  public static <T> void show(
+      Ui ui,
+      String title,
+      List<T> items,
+      Function<T, String> label,
+      boolean multi,
+      List<T> initial,
+      Function<List<T>, String> validate,
+      boolean replaceOnLabel,
+      Consumer<List<T>> select) {
     LinearLayout layout = ui.column();
     layout.setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(8));
     PickerSelection<T> selection = new PickerSelection<>(initial);
@@ -92,9 +105,7 @@ public final class SearchPicker {
             ui.weighted(row, text);
             Runnable quick =
                 () -> {
-                  List<T> chosen = new ArrayList<>(selection.selected());
-                  if (!chosen.contains(item)) chosen.add(item);
-                  apply.accept(multi ? List.copyOf(chosen) : List.of(item));
+                  apply.accept(selection.quick(item, !multi || replaceOnLabel));
                 };
             row.setOnClickListener(v -> quick.run());
             text.setOnClickListener(v -> quick.run());
@@ -115,6 +126,13 @@ public final class SearchPicker {
                     selection.set(chosen);
                   });
               row.addView(check, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
+            } else if (!initial.isEmpty()) {
+              var radio =
+                  new com.google.android.material.radiobutton.MaterialRadioButton(ui.activity);
+              radio.setChecked(selection.contains(item));
+              radio.setContentDescription("Выбрать: " + label.apply(item));
+              radio.setOnClickListener(v -> quick.run());
+              row.addView(radio, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
             }
             return row;
           }

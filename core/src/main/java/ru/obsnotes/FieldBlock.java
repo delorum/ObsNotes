@@ -29,6 +29,30 @@ public final class FieldBlock {
     return fields;
   }
 
+  /** Turn active field lines into copy labels; literal fenced examples remain untouched. */
+  public static String labels(String text) {
+    String[] lines = text.split("\n", -1);
+    char marker = 0;
+    int length = 0;
+    for (int i = 0; i < lines.length; i++) {
+      var fence = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$").matcher(lines[i]);
+      if (fence.matches()) {
+        if (marker == 0) {
+          marker = fence.group(1).charAt(0);
+          length = fence.group(1).length();
+        } else if (fence.group(1).charAt(0) == marker
+            && fence.group(1).length() >= length
+            && fence.group(2).isBlank()) marker = 0;
+        continue;
+      }
+      if (marker == 0 && FIELD.matcher(lines[i]).matches()) {
+        int at = lines[i].indexOf("::");
+        lines[i] = lines[i].substring(0, at) + lines[i].substring(at + 1);
+      }
+    }
+    return String.join("\n", lines);
+  }
+
   public boolean present() {
     return !fields.isEmpty();
   }

@@ -33,4 +33,11 @@ public final class PickerSelection<T> {
     selected.add(item);
     return selected();
   }
+
+  public List<T> quick(T item, boolean replace) {
+    if (replace) return List.of(item);
+    LinkedHashSet<T> next = new LinkedHashSet<>(selected);
+    next.add(item);
+    return List.copyOf(next);
+  }
 }

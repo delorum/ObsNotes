@@ -21,6 +21,10 @@ public final class EditorScreen {
 
     void routesChanged();
 
+    void replaceRoute(int index);
+
+    void replaceTag(int index);
+
     void today();
 
     void destination();
@@ -182,6 +186,11 @@ public final class EditorScreen {
       var route = state.routes.get(i);
       Chip chip = chip(ui, route.label(), i == 0 ? Ui.INK : Ui.ACCENT);
       chip.setCloseIconContentDescription("Удалить раздел: " + route.label());
+      chip.setOnClickListener(
+          v -> {
+            state.cursor = cursor(edits, state.cursor);
+            actions.replaceRoute(index);
+          });
       chip.setOnCloseIconClickListener(
           v -> {
             state.cursor = cursor(edits, state.cursor);
@@ -206,6 +215,11 @@ public final class EditorScreen {
       Chip chip = chip(ui, label, color);
       chip.setContentDescription(
           label + (tag.oneLine() ? ", строка " + tag.line(clean) : ", весь блок"));
+      chip.setOnClickListener(
+          v -> {
+            state.cursor = cursor(edits, state.cursor);
+            actions.replaceTag(index);
+          });
       chip.setOnCloseIconClickListener(
           v -> {
             state.removeUnmanagedTag(index, catalog);
@@ -217,7 +231,7 @@ public final class EditorScreen {
     String root = state.rootLinkLabel();
     if (!root.isEmpty()) {
       Chip chip = chip(ui, "К корню: " + root, Ui.ACCENT);
-      chip.setOnClickListener(v -> actions.related());
+      chip.setOnClickListener(v -> actions.link());
       chip.setOnCloseIconClickListener(
           v -> {
             state.removeRootLink();

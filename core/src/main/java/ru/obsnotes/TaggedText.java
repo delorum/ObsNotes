@@ -109,6 +109,23 @@ public final class TaggedText {
     return new TaggedText(clean, kept);
   }
 
+  /** Replace an assignment at its stored position, independent of the editor cursor. */
+  public TaggedText replace(int index, List<String> ids) {
+    Tag old = tags.get(index);
+    for (String id : ids)
+      if (!id.matches("[\\p{L}\\d]+")) throw new IllegalArgumentException("Неверный идентификатор");
+    if (String.join("", ids).equals(old.ids())) return this;
+    if (!old.person()) {
+      List<Tag> next = new ArrayList<>(tags);
+      if (ids.isEmpty()) next.remove(index);
+      else next.set(index, new Tag(old.kind(), String.join("", ids), old.position()));
+      return withTags(next);
+    }
+    TaggedText result = remove(index);
+    for (String id : ids) result = result.add(old.position(), List.of(id), old.oneLine(), true);
+    return result;
+  }
+
   public TaggedText withTags(List<Tag> replacement) {
     return new TaggedText(clean, replacement);
   }
