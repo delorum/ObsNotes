@@ -208,7 +208,7 @@ public class DiaryTest {
   }
 
   @Test
-  public void movePlansDestinationFirstAndKeepsUnrelatedSourceBytes() {
+  public void movePlansDestinationFirstAndCleansOrphanTimestamp() {
     Markdown from = new Markdown("## Заметки\n\n2026-11-15 10:00:00\nперенести\n\nоставить\n");
     Markdown to = new Markdown("## Заметки\n\nпрошлое\n");
     EditorState s = editing(from);
@@ -218,7 +218,7 @@ public class DiaryTest {
         VaultRepository.plan(s, from, to, CATALOG, LocalDate.of(2026, 11, 14), LocalDateTime.now());
     assertEquals("past.md", changes.get(0).path());
     assertTrue(changes.get(0).after().contains("перенести"));
-    assertEquals(from.text.replace("перенести", ""), changes.get(1).after());
+    assertEquals("## Заметки\n\nоставить\n", changes.get(1).after());
   }
 
   @Test
@@ -304,9 +304,7 @@ public class DiaryTest {
     s.rootReplacement = Events.root(root.text());
     s.rootSnapshot = m.text;
     s.text = Events.link(s.text, new Events.Root(s.sourcePath, root, Events.id(s.rootReplacement)));
-    var changes =
-        VaultRepository.addRoot(
-            VaultRepository.plan(s, m, m, CATALOG, LocalDate.now(), LocalDateTime.now()), s);
+    var changes = VaultRepository.plan(s, m, m, CATALOG, LocalDate.now(), LocalDateTime.now());
     assertEquals(1, changes.size());
     String result = changes.get(0).after();
     assertTrue(result.contains("#^" + Events.id(s.rootReplacement)));

@@ -3,13 +3,11 @@ package ru.obsnotes;
 import android.content.SharedPreferences;
 import org.json.*;
 
-/**
- * App-private draft includes the original snapshots, so restarting cannot silently rebase edits.
- */
-public final class DraftStore {
+/** Internal recovery snapshot for interrupted or failed saves; no separate draft workflow. */
+public final class EditorRecovery {
   private final SharedPreferences prefs;
 
-  public DraftStore(SharedPreferences prefs) {
+  public EditorRecovery(SharedPreferences prefs) {
     this.prefs = prefs;
   }
 
@@ -29,20 +27,38 @@ public final class DraftStore {
       j.put("targetLine", s.targetLine);
       j.put("kind", s.kind.name());
       j.put("fresh", s.fresh);
+      j.put("appendTaskText", s.appendTaskText);
+      j.put("editFields", s.editFields);
+      j.put("routesInitialized", s.routesInitialized);
+      j.put("routeChosen", s.routeChosen);
+      j.put("fallbackHeading", s.fallbackHeading);
+      JSONArray routes = new JSONArray();
+      for (var choice : s.routes) {
+        var t = choice.target();
+        JSONObject route = new JSONObject();
+        route.put("label", t.label());
+        route.put("heading", t.heading());
+        route.put("line", t.line());
+        route.put("source", t.source());
+        route.put("kind", t.kind().name());
+        route.put("crossId", choice.crossId());
+        routes.put(route);
+      }
+      j.put("routes", routes);
       j.put("sourceSnapshot", s.sourceSnapshot);
       j.put("destinationSnapshot", s.destinationSnapshot);
       j.put("rootPath", s.rootPath);
       j.put("rootOriginal", s.rootOriginal);
       j.put("rootReplacement", s.rootReplacement);
       j.put("rootSnapshot", s.rootSnapshot);
-      prefs.edit().putString(key(vault), j.toString()).apply();
+      prefs.edit().putString(key(vault), j.toString()).remove(legacyKey(vault)).apply();
     } catch (JSONException e) {
       throw new IllegalStateException(e);
     }
   }
 
   public EditorState load(String vault) {
-    String value = prefs.getString(key(vault), null);
+    String value = prefs.getString(key(vault), prefs.getString(legacyKey(vault), null));
     if (value == null) return null;
     try {
       JSONObject j = new JSONObject(value);
@@ -60,6 +76,27 @@ public final class DraftStore {
       s.targetLine = j.getInt("targetLine");
       s.kind = Markdown.Kind.valueOf(j.getString("kind"));
       s.fresh = j.getBoolean("fresh");
+      s.appendTaskText = j.optBoolean("appendTaskText", true);
+      s.editFields = j.optBoolean("editFields");
+      s.routesInitialized = j.optBoolean("routesInitialized");
+      s.routeChosen = j.optBoolean("routeChosen");
+      s.fallbackHeading = j.optString("fallbackHeading");
+      JSONArray routes = j.optJSONArray("routes");
+      java.util.List<Routing.Choice> choices = new java.util.ArrayList<>();
+      if (routes != null)
+        for (int i = 0; i < routes.length(); i++) {
+          JSONObject route = routes.getJSONObject(i);
+          choices.add(
+              new Routing.Choice(
+                  new Markdown.Target(
+                      route.getString("label"),
+                      route.getString("heading"),
+                      route.getInt("line"),
+                      route.getString("source"),
+                      Markdown.Kind.valueOf(route.getString("kind"))),
+                  route.getString("crossId")));
+        }
+      s.routes = java.util.List.copyOf(choices);
       s.sourceSnapshot = j.getString("sourceSnapshot");
       s.destinationSnapshot = j.getString("destinationSnapshot");
       s.rootPath = j.optString("rootPath");
@@ -73,11 +110,15 @@ public final class DraftStore {
   }
 
   private String key(String vault) {
-    return "draft-"
+    return "editor-"
         + java.util.UUID.nameUUIDFromBytes(vault.getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
+  private String legacyKey(String vault) {
+    return key(vault).replaceFirst("^editor-", "draft-");
+  }
+
   public void clear(String vault) {
-    prefs.edit().remove(key(vault)).apply();
+    prefs.edit().remove(key(vault)).remove(legacyKey(vault)).apply();
   }
 }

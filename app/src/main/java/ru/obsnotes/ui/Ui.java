@@ -164,6 +164,10 @@ public final class Ui {
     enable(body, !value);
   }
 
+  public void loading(boolean value) {
+    progress.setVisibility(value ? View.VISIBLE : View.GONE);
+  }
+
   private void enable(View view, boolean value) {
     view.setEnabled(value);
     if (view instanceof android.view.ViewGroup group)
@@ -216,7 +220,7 @@ public final class Ui {
   public LinearLayout card(LinearLayout parent) {
     LinearLayout card = column();
     card.setBackground(background(CARD, 14));
-    card.setPadding(dp(10), dp(2), dp(10), dp(6));
+    card.setPadding(dp(10), dp(8), dp(10), dp(8));
     LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
     p.bottomMargin = dp(8);
     parent.addView(card, p);

@@ -109,6 +109,10 @@ public final class TaggedText {
     return new TaggedText(clean, kept);
   }
 
+  public TaggedText withTags(List<Tag> replacement) {
+    return new TaggedText(clean, replacement);
+  }
+
   public String render() {
     record Insertion(int at, int order, String value) {}
     List<Insertion> inserts = new ArrayList<>();

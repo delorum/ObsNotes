@@ -26,8 +26,6 @@ public final class DayScreen {
 
     void edit(Markdown.Block block);
 
-    void draft();
-
     void refresh();
   }
 
@@ -37,12 +35,10 @@ public final class DayScreen {
       Markdown document,
       Markdown template,
       boolean connected,
-      boolean draft,
       Set<String> expanded,
       Actions actions) {
     ui.page("ObsNotes", null);
-    if (draft)
-      ui.action(ui.bar, ru.obsnotes.R.drawable.ic_draft, "Открыть черновик", actions::draft);
+    if (connected) ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     if (connected)
       ui.action(ui.bar, ru.obsnotes.R.drawable.ic_refresh, "Обновить", actions::refresh);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_settings, "Настройки", actions::settings);
@@ -60,6 +56,7 @@ public final class DayScreen {
             Ui.INK);
     day.setGravity(android.view.Gravity.CENTER);
     day.setMinHeight(ui.dp(48));
+    day.setMaxLines(2);
     day.setOnClickListener(v -> actions.chooseDate());
     day.setOnLongClickListener(
         v -> {
@@ -69,9 +66,11 @@ public final class DayScreen {
     day.setContentDescription("Выбрать дату. Удерживайте, чтобы открыть сегодня");
     ui.weighted(dates, day);
     ui.action(dates, ru.obsnotes.R.drawable.ic_right, "Следующий день", () -> actions.navigate(1));
-    ui.body.addView(dates);
+    LinearLayout.LayoutParams dateLayout = new LinearLayout.LayoutParams(-1, -2);
+    dateLayout.bottomMargin = ui.dp(8);
+    ui.body.addView(dates, dateLayout);
     if (document == null) {
-      ui.body.addView(ui.text("За этот день заметка ещё не создана", 16, Ui.MUTED));
+      ui.error(DayNavigation.NOT_FOUND);
       return;
     }
     for (DayOutline.Section section : DayOutline.sections(document, template))

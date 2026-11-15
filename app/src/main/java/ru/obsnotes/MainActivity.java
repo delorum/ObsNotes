@@ -18,11 +18,15 @@ import ru.obsnotes.ui.*;
 public final class MainActivity extends AppCompatActivity {
   private Ui ui;
   private SharedPreferences prefs;
-  private DraftStore drafts;
+  private EditorRecovery recovery;
   private SafVaultStorage storage;
   private VaultRepository repository;
   private DiaryIndex index = new DiaryIndex();
   private final ExecutorService io = Executors.newSingleThreadExecutor();
+  private final ExecutorService navigationIo = Executors.newSingleThreadExecutor();
+  private Future<?> navigationJob;
+  private long navigationVersion;
+  private boolean navigationPending = false, polling = false;
   private final ExecutorService relationIo = Executors.newSingleThreadExecutor();
   private java.util.concurrent.atomic.AtomicBoolean relationCancelled;
   private Future<?> relationJob;
@@ -37,7 +41,12 @@ public final class MainActivity extends AppCompatActivity {
   private final Runnable poll =
       new Runnable() {
         public void run() {
-          if (connected && screen.equals("day") && !busy && document != null) refreshQuietly();
+          if (connected
+              && screen.equals("day")
+              && !busy
+              && !polling
+              && !navigationPending
+              && document != null) refreshQuietly();
           handler.postDelayed(this, 5000);
         }
       };
@@ -49,7 +58,7 @@ public final class MainActivity extends AppCompatActivity {
     androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
     ui = new Ui(this);
     prefs = getSharedPreferences("obsnotes", MODE_PRIVATE);
-    drafts = new DraftStore(prefs);
+    recovery = new EditorRecovery(prefs);
     vault = prefs.getString("vault", "");
     if (saved != null) {
       day = LocalDate.parse(saved.getString("day", LocalDate.now().toString()));
@@ -69,9 +78,8 @@ public final class MainActivity extends AppCompatActivity {
                 }
               }
             });
-    boolean restore = saved != null && "editor".equals(screen);
     showDay();
-    if (!vault.isEmpty()) connect(vault, restore);
+    if (!vault.isEmpty()) connect(vault);
   }
 
   @Override
@@ -83,13 +91,13 @@ public final class MainActivity extends AppCompatActivity {
   @Override
   protected void onPause() {
     handler.removeCallbacks(poll);
-    if (editor != null) drafts.save(editor, vault);
+    if (editor != null && connected && screen.equals("editor") && !busy) saveEditor();
     super.onPause();
   }
 
   @Override
   protected void onSaveInstanceState(Bundle out) {
-    if (editor != null) drafts.save(editor, vault);
+    if (editor != null && !busy) recovery.save(editor, vault);
     out.putString("day", day.toString());
     out.putString("screen", screen);
     super.onSaveInstanceState(out);
@@ -101,6 +109,8 @@ public final class MainActivity extends AppCompatActivity {
     if (relationsDialog != null) relationsDialog.dismiss();
     cancelRelations();
     relationIo.shutdownNow();
+    cancelNavigation();
+    navigationIo.shutdownNow();
     io.shutdown();
     super.onDestroy();
   }
@@ -132,10 +142,7 @@ public final class MainActivity extends AppCompatActivity {
                   if (isDestroyed()) return;
                   busy = false;
                   ui.busy(false);
-                  lastError =
-                      error.getMessage() == null
-                          ? error.getClass().getSimpleName()
-                          : error.getMessage();
+                  lastError = DayNavigation.message(error);
                   ui.error(lastError);
                 });
           }
@@ -148,7 +155,8 @@ public final class MainActivity extends AppCompatActivity {
       DiaryIndex index,
       DiaryIndex.Opened opened) {}
 
-  private void connect(String value, boolean restoreEditor) {
+  private void connect(String value) {
+    cancelNavigation();
     work(
         () -> {
           SafVaultStorage s = new SafVaultStorage(this, Uri.parse(value));
@@ -173,58 +181,124 @@ public final class MainActivity extends AppCompatActivity {
           connected = true;
           index = loaded.index;
           prefs.edit().putString("vault", value).apply();
-          if (restoreEditor && drafts.load(vault) != null) resumeDraft();
+          if (recovery.load(vault) != null) restoreEditor();
           else showDay();
         });
   }
 
+  private void cancelNavigation() {
+    navigationVersion++;
+    navigationPending = false;
+    if (navigationJob != null) navigationJob.cancel(true);
+    if (ui != null && !busy) ui.loading(false);
+  }
+
   private void loadDay() {
+    navigateTo(day, true);
+  }
+
+  private void today() {
+    if (editor != null) saveEditor(() -> navigateTo(LocalDate.now(), false));
+    else navigateTo(LocalDate.now(), false);
+  }
+
+  private void navigateTo(LocalDate requested, boolean refresh) {
+    if (busy) return;
+    cancelNavigation();
     if (!connected) {
       showDay();
       return;
     }
-    path = DiaryLayout.path(day);
-    String requested = path;
-    work(
-        () -> {
-          repository.recover();
-          try {
-            return new Markdown(storage.read(requested));
-          } catch (FileNotFoundException e) {
-            return null;
-          }
-        },
-        loaded -> {
-          document = loaded;
-          showDay();
-        });
+    if (!refresh && requested.equals(day) && document != null) {
+      if (editor != null) recovery.save(editor, vault);
+      editor = null;
+      lastError = null;
+      showDay();
+      return;
+    }
+    if (editor != null) recovery.save(editor, vault);
+    long token = navigationVersion;
+    String origin = screen;
+    EditorState form = editor;
+    SafVaultStorage selectedStorage = storage;
+    DayNavigation.View current = new DayNavigation.View(day, path, document);
+    navigationPending = true;
+    ui.loading(true);
+    ui.error(null);
+    navigationJob =
+        navigationIo.submit(
+            () -> {
+              try {
+                DayNavigation.Result result =
+                    DayNavigation.open(selectedStorage, current, requested);
+                runOnUiThread(
+                    () -> {
+                      if (isDestroyed()
+                          || token != navigationVersion
+                          || storage != selectedStorage
+                          || !screen.equals(origin)
+                          || editor != form) return;
+                      navigationPending = false;
+                      ui.loading(false);
+                      if (!result.opened()) {
+                        lastError = result.error();
+                        ui.error(lastError);
+                        return;
+                      }
+                      if (editor != null) recovery.save(editor, vault);
+                      editor = null;
+                      day = result.view().date();
+                      path = result.view().path();
+                      document = result.view().document();
+                      lastError = null;
+                      showDay();
+                    });
+              } catch (Exception error) {
+                runOnUiThread(
+                    () -> {
+                      if (!isDestroyed() && token == navigationVersion) {
+                        navigationPending = false;
+                        ui.loading(false);
+                        lastError = DayNavigation.message(error);
+                        ui.error(lastError);
+                      }
+                    });
+              }
+            });
   }
 
   private void refreshQuietly() {
-    busy = true;
-    String previous = document.text;
-    String requested = path;
+    if (polling || busy) return;
+    polling = true;
+    String previous = document.text, requested = path;
+    SafVaultStorage selectedStorage = storage;
     io.execute(
         () -> {
           try {
-            String fresh = storage.read(requested);
+            String fresh = selectedStorage.read(requested);
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
-                  busy = false;
-                  if (!fresh.equals(previous) && screen.equals("day")) {
+                  polling = false;
+                  if (storage == selectedStorage
+                      && screen.equals("day")
+                      && path.equals(requested)
+                      && document != null
+                      && document.text.equals(previous)
+                      && !fresh.equals(previous)) {
                     int y = ui.scroll.getScrollY();
                     document = new Markdown(fresh);
                     showDay();
                     ui.scroll.post(() -> ui.scroll.scrollTo(0, y));
                   }
                 });
-          } catch (Exception e) {
+          } catch (Exception error) {
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
-                  busy = false;
-                  ui.error(e.getMessage());
+                  polling = false;
+                  if (storage == selectedStorage && screen.equals("day") && path.equals(requested))
+                    ui.error(DayNavigation.message(error));
                 });
           }
         });
@@ -238,7 +312,6 @@ public final class MainActivity extends AppCompatActivity {
         document,
         template,
         connected,
-        drafts != null && drafts.load(vault) != null,
         expanded,
         new DayScreen.Actions() {
           public void settings() {
@@ -251,8 +324,7 @@ public final class MainActivity extends AppCompatActivity {
 
           public void navigate(int delta) {
             if (!busy) {
-              day = day.plusDays(delta);
-              loadDay();
+              navigateTo(day.plusDays(delta), false);
             }
           }
 
@@ -261,8 +333,7 @@ public final class MainActivity extends AppCompatActivity {
               new DatePickerDialog(
                       MainActivity.this,
                       (picker, y, m, d) -> {
-                        day = LocalDate.of(y, m + 1, d);
-                        loadDay();
+                        navigateTo(LocalDate.of(y, m + 1, d), false);
                       },
                       day.getYear(),
                       day.getMonthValue() - 1,
@@ -272,8 +343,7 @@ public final class MainActivity extends AppCompatActivity {
 
           public void today() {
             if (!busy) {
-              day = LocalDate.now();
-              loadDay();
+              MainActivity.this.today();
             }
           }
 
@@ -285,10 +355,6 @@ public final class MainActivity extends AppCompatActivity {
             if (!busy) startEditor(block);
           }
 
-          public void draft() {
-            if (!busy) resumeDraft();
-          }
-
           public void refresh() {
             if (!busy) loadDay();
           }
@@ -297,19 +363,19 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void home() {
-    if (editor != null) drafts.save(editor, vault);
+    if (editor != null) {
+      saveEditor();
+      return;
+    }
+    cancelNavigation();
+    if (editor != null) recovery.save(editor, vault);
     editor = null;
-    screen = "day";
-    loadDay();
+    showDay();
+    if (connected && document != null && !polling) refreshQuietly();
   }
 
   private void startEditor(Markdown.Block block) {
-    EditorState previous = drafts.load(vault);
-    if (previous != null && !previous.text.isBlank()) {
-      resumeDraft();
-      ui.error("Открыт незавершённый черновик. Сохраните его или уберите через настройки.");
-      return;
-    }
+    cancelNavigation();
     if (document == null) return;
     editor = new EditorState();
     editor.sourcePath = path;
@@ -324,20 +390,24 @@ public final class MainActivity extends AppCompatActivity {
       editor.end = block.end();
       editor.heading = block.section().heading();
     }
-    drafts.save(editor, vault);
+    recovery.save(editor, vault);
     showEditor();
   }
 
-  private void resumeDraft() {
-    editor = drafts.load(vault);
+  private void restoreEditor() {
+    cancelNavigation();
+    editor = recovery.load(vault);
     if (editor != null) showEditor();
   }
 
   private void showEditor() {
+    cancelNavigation();
+    editor.initializeRoutes(template);
     screen = "editor";
     EditorScreen.show(
         ui,
         editor,
+        template,
         new EditorScreen.Actions() {
           public void back() {
             if (!busy) home();
@@ -348,11 +418,20 @@ public final class MainActivity extends AppCompatActivity {
           }
 
           public void changed() {
-            drafts.save(editor, vault);
+            recovery.save(editor, vault);
           }
 
-          public void target() {
+          public void sections() {
             pickTarget();
+          }
+
+          public void routesChanged() {
+            recovery.save(editor, vault);
+            showEditor();
+          }
+
+          public void today() {
+            MainActivity.this.today();
           }
 
           public void destination() {
@@ -367,7 +446,7 @@ public final class MainActivity extends AppCompatActivity {
             if (!busy) {
               try {
                 editor.text = Events.root(editor.text);
-                drafts.save(editor, vault);
+                recovery.save(editor, vault);
                 showEditor();
               } catch (IllegalArgumentException e) {
                 ui.error(e.getMessage());
@@ -387,28 +466,34 @@ public final class MainActivity extends AppCompatActivity {
 
   private void pickTarget() {
     if (busy) return;
-    Markdown destination = new Markdown(editor.destinationSnapshot);
-    List<Markdown.Target> targets = destination.targets(template);
-    if (!editor.fresh && editor.sourcePath.equals(editor.destinationPath))
-      targets =
-          targets.stream()
-              .filter(
-                  t ->
-                      t.kind() == Markdown.Kind.SECTION
-                          || t.line() < editor.start
-                          || t.line() >= editor.end)
-              .collect(java.util.stream.Collectors.toList());
+    var catalog = editor.routingCatalog(template);
+    List<Routing.Choice> choices =
+        catalog.choices.stream()
+            .filter(c -> !editor.editFields || c.target().kind() == Markdown.Kind.SECTION)
+            .filter(
+                c ->
+                    editor.fresh
+                        || !editor.sourcePath.equals(editor.destinationPath)
+                        || c.target().kind() == Markdown.Kind.SECTION
+                        || c.target().line() < editor.start
+                        || c.target().line() >= editor.end)
+            .collect(java.util.stream.Collectors.toList());
     SearchPicker.show(
         ui,
-        "Раздел, задача или ключ",
-        targets,
-        Markdown.Target::label,
-        false,
+        "Разделы",
+        choices,
+        catalog::searchLabel,
+        true,
+        editor.pickerRoutes(),
+        editor::validateRoutes,
         selected -> {
-          var t = selected.get(0);
-          editor.chooseTarget(t);
-          drafts.save(editor, vault);
-          showEditor();
+          try {
+            editor.applyRoutes(selected, catalog);
+            recovery.save(editor, vault);
+            showEditor();
+          } catch (IllegalArgumentException error) {
+            ui.error(error.getMessage());
+          }
         });
   }
 
@@ -444,7 +529,7 @@ public final class MainActivity extends AppCompatActivity {
                 () -> index.day(storage, selected.date()),
                 loaded -> {
                   editor.chooseDay(loaded.path(), loaded.document().text);
-                  drafts.save(editor, vault);
+                  recovery.save(editor, vault);
                   showEditor();
                 }));
   }
@@ -465,7 +550,7 @@ public final class MainActivity extends AppCompatActivity {
                   .collect(java.util.stream.Collectors.toList()),
               oneLine,
               person);
-          drafts.save(editor, vault);
+          recovery.save(editor, vault);
           showEditor();
         });
   }
@@ -493,7 +578,7 @@ public final class MainActivity extends AppCompatActivity {
                     ui.error(e.getMessage());
                     return;
                   }
-                  drafts.save(editor, vault);
+                  recovery.save(editor, vault);
                   showEditor();
                 }));
   }
@@ -560,38 +645,58 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void saveEditor() {
+    saveEditor(null);
+  }
+
+  private void saveEditor(Runnable after) {
     if (busy || editor == null) return;
-    drafts.save(editor, vault);
-    Markdown from = new Markdown(editor.sourceSnapshot),
-        to = new Markdown(editor.destinationSnapshot);
+    cancelNavigation();
+    recovery.save(editor, vault);
+    EditorState form = editor;
+    String selectedVault = vault;
+    Markdown from = new Markdown(form.sourceSnapshot), to = new Markdown(form.destinationSnapshot);
     final List<VaultRepository.Change> changes;
     try {
       LocalDate targetDay =
-          LocalDate.parse(DiaryLayout.fileName(editor.destinationPath).substring(0, 10));
-      changes =
-          VaultRepository.addRoot(
-              VaultRepository.plan(editor, from, to, template, targetDay, LocalDateTime.now()),
-              editor);
-    } catch (IllegalArgumentException e) {
-      ui.error(e.getMessage());
+          LocalDate.parse(DiaryLayout.fileName(form.destinationPath).substring(0, 10));
+      changes = VaultRepository.plan(form, from, to, template, targetDay, LocalDateTime.now());
+    } catch (IllegalArgumentException error) {
+      lastError = error.getMessage();
+      ui.error(lastError);
       return;
     }
-    String destination = editor.destinationPath;
+    if (changes.isEmpty()) {
+      recovery.clear(selectedVault);
+      editor = null;
+      lastError = null;
+      showDay();
+      if (after != null) after.run();
+      return;
+    }
+    var result =
+        changes.stream()
+            .filter(c -> c.path().equals(form.destinationPath))
+            .findFirst()
+            .orElse(changes.get(0));
+    VaultRepository selectedRepository = repository;
     work(
         () -> {
-          repository.commit(changes);
+          selectedRepository.commit(changes);
+          recovery.clear(selectedVault);
           return true;
         },
         ok -> {
-          drafts.clear(vault);
           editor = null;
-          day = LocalDate.parse(DiaryLayout.fileName(destination).substring(0, 10));
-          screen = "day";
-          loadDay();
+          day = LocalDate.parse(DiaryLayout.fileName(result.path()).substring(0, 10));
+          path = result.path();
+          document = new Markdown(result.after());
+          showDay();
+          if (after != null) after.run();
         });
   }
 
   private void showSettings() {
+    cancelNavigation();
     screen = "settings";
     String folder =
         vault.isEmpty()
@@ -600,7 +705,6 @@ public final class MainActivity extends AppCompatActivity {
     SettingsScreen.show(
         ui,
         folder,
-        drafts.load(vault) != null,
         repository != null,
         new SettingsScreen.Actions() {
           public void back() {
@@ -609,16 +713,6 @@ public final class MainActivity extends AppCompatActivity {
 
           public void chooseVault() {
             MainActivity.this.chooseVault();
-          }
-
-          public void draft() {
-            resumeDraft();
-          }
-
-          public void deleteDraft() {
-            drafts.clear(vault);
-            editor = null;
-            showSettings();
           }
 
           public void recover() {
@@ -667,7 +761,7 @@ public final class MainActivity extends AppCompatActivity {
       getContentResolver()
           .takePersistableUriPermission(
               uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-      connect(uri.toString(), false);
+      connect(uri.toString());
     } catch (SecurityException e) {
       ui.error(e.getMessage());
     }

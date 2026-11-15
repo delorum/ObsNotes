@@ -258,22 +258,45 @@ public final class Markdown {
       throw new IllegalArgumentException("Для задачи или ключа нужен однострочный блок");
     if (target.line < 0 || !text.startsWith(target.source, target.line))
       throw new IllegalArgumentException("Назначение изменилось");
-    String result;
-    if (target.kind == Kind.TASK) {
-      String line = target.source.replaceFirst("\\[ \\]", "[x]");
-      Matcher done = Pattern.compile("(\\s*✅\\s*\\d{4}-\\d{2}-\\d{2})\\s*$").matcher(line);
-      String marker = done.find() ? done.group(1) : " ✅ " + date;
-      if (done.find(0)) line = line.substring(0, done.start());
-      if (!value.isBlank()
-          && !line.toLowerCase(Locale.ROOT).contains(value.toLowerCase(Locale.ROOT)))
-        line += "; " + value;
-      result = line + marker;
-    } else {
-      Matcher field = FIELD.matcher(target.source);
-      if (!field.matches()) throw new IllegalArgumentException("Неизвестный ключ");
-      String previous = field.group(2).trim().replaceAll("Заполни [^!]*!", "").trim();
-      result = field.group(1) + ":: " + (previous.isEmpty() ? "" : previous + "; ") + value;
-    }
+    if (target.kind == Kind.TASK) return completeTask(target, value, List.of(), date);
+    Matcher field = FIELD.matcher(target.source);
+    if (!field.matches()) throw new IllegalArgumentException("Неизвестный ключ");
+    String previous = field.group(2).trim().replaceAll("Заполни [^!]*!", "").trim();
+    return replaceTarget(
+        target, field.group(1) + ":: " + (previous.isEmpty() ? "" : previous + "; ") + value);
+  }
+
+  public Markdown completeTask(Target target, String value, List<String> crossIds, LocalDate date) {
+    if (target.kind != Kind.TASK || !TASK.matcher(target.source).matches())
+      throw new IllegalArgumentException("Неизвестная задача");
+    if (value.contains("\n"))
+      throw new IllegalArgumentException("Для задачи нужен однострочный блок");
+    String line = target.source.replaceFirst("\\[ \\]", "[x]");
+    Matcher done = Pattern.compile("(\\s*✅\\s*\\d{4}-\\d{2}-\\d{2})\\s*$").matcher(line);
+    String marker = done.find() ? done.group(1) : " ✅ " + date;
+    if (done.find(0)) line = line.substring(0, done.start());
+    if (!value.isBlank() && !line.toLowerCase(Locale.ROOT).contains(value.toLowerCase(Locale.ROOT)))
+      line += "; " + value;
+    String tagged = line;
+    List<String> missing =
+        crossIds.stream()
+            .filter(
+                id -> {
+                  Matcher tags = Pattern.compile("#crossPeople/([\\p{L}]+)").matcher(tagged);
+                  while (tags.find())
+                    if (tags.group(1)
+                        .toLowerCase(Locale.ROOT)
+                        .contains(id.toLowerCase(Locale.ROOT))) return false;
+                  return true;
+                })
+            .collect(java.util.stream.Collectors.toList());
+    if (!missing.isEmpty()) line += " #crossPeople/" + String.join("", missing);
+    return replaceTarget(target, line + marker);
+  }
+
+  private Markdown replaceTarget(Target target, String result) {
+    if (target.line < 0 || !text.startsWith(target.source, target.line))
+      throw new IllegalArgumentException("Назначение изменилось");
     return new Markdown(
         text.substring(0, target.line)
             + result

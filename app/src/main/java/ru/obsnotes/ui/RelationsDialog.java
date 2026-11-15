@@ -6,6 +6,7 @@ import android.widget.*;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.*;
 import java.util.function.Consumer;
+import ru.obsnotes.FuzzySearch;
 import ru.obsnotes.RelationSearch;
 
 /** Results are usable while the optional archive back-link search continues. Dismiss cancels it. */
@@ -57,7 +58,7 @@ public final class RelationsDialog {
     String query = search.getText().toString().strip().toLowerCase(Locale.ROOT);
     filtered =
         items.stream()
-            .filter(item -> item.label().toLowerCase(Locale.ROOT).contains(query))
+            .filter(item -> FuzzySearch.matches(item.label(), query))
             .collect(java.util.stream.Collectors.toList());
     adapter.setNotifyOnChange(false);
     adapter.clear();

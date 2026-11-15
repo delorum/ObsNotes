@@ -16,6 +16,18 @@ public final class EditorState {
   public int start = -1, end = -1, targetLine = -1, cursor = 0;
   public Markdown.Kind kind = Markdown.Kind.SECTION;
   public boolean fresh = true;
+  public boolean appendTaskText = true;
+  public boolean editFields = false, routesInitialized = false, routeChosen = false;
+  public String fallbackHeading = "";
+  public List<Routing.Choice> routes = List.of();
+
+  public boolean taskOnly() {
+    return kind == Markdown.Kind.TASK && !appendTaskText;
+  }
+
+  public boolean emptyNote() {
+    return TaggedText.parse(parts().body).clean.isBlank();
+  }
 
   public void chooseTarget(Markdown.Target target) {
     if (!fresh
@@ -28,6 +40,7 @@ public final class EditorState {
     kind = target.kind();
     targetLine = target.line();
     targetSource = target.source();
+    if (kind != Markdown.Kind.TASK) appendTaskText = true;
   }
 
   public void chooseDay(String path, String snapshot) {
@@ -41,6 +54,9 @@ public final class EditorState {
     kind = Markdown.Kind.SECTION;
     targetLine = -1;
     targetSource = "";
+    appendTaskText = true;
+    routesInitialized = false;
+    routes = List.of();
   }
 
   public void attach(Events.Root selected) {
@@ -82,27 +98,62 @@ public final class EditorState {
     return new Parts(prefix, body, id, callout);
   }
 
+  private String editableBody(Parts p) {
+    var fields = FieldBlock.parse(p.body);
+    return editFields && fields.present() ? fields.values() : p.body;
+  }
+
+  private String joinEditable(Parts p, String raw) {
+    var fields = FieldBlock.parse(p.body);
+    return p.join(editFields && fields.present() ? fields.withValues(raw) : raw);
+  }
+
+  public int fieldCount() {
+    return editFields ? FieldBlock.parse(parts().body).fields().size() : 0;
+  }
+
+  public String fieldName(int index) {
+    return FieldBlock.parse(parts().body).fields().get(index).key();
+  }
+
+  public String fieldValue(int index) {
+    return TaggedText.parse(FieldBlock.parse(parts().body).fields().get(index).value()).clean;
+  }
+
+  public void editField(int index, String value) {
+    Parts p = parts();
+    var fields = FieldBlock.parse(p.body);
+    String raw =
+        TaggedText.parse(fields.fields().get(index).value())
+            .edit(value.replace("\r\n", "\n").replace("\n", "; "))
+            .render();
+    text = p.join(fields.edit(index, raw));
+  }
+
   public String editableText() {
-    return TaggedText.parse(parts().body).clean;
+    return TaggedText.parse(editableBody(parts())).clean;
   }
 
   public List<TaggedText.Tag> tags() {
-    return TaggedText.parse(parts().body).tags;
+    return TaggedText.parse(editableBody(parts())).tags;
   }
 
   public void edit(String value) {
     Parts parts = parts();
-    text = parts.join(TaggedText.parse(parts.body).edit(value).render());
+    text = joinEditable(parts, TaggedText.parse(editableBody(parts)).edit(value).render());
   }
 
   public void addTags(int cursor, Collection<String> ids, boolean oneLine, boolean person) {
     Parts parts = parts();
-    text = parts.join(TaggedText.parse(parts.body).add(cursor, ids, oneLine, person).render());
+    text =
+        joinEditable(
+            parts,
+            TaggedText.parse(editableBody(parts)).add(cursor, ids, oneLine, person).render());
   }
 
   public void removeTag(int index) {
     Parts parts = parts();
-    text = parts.join(TaggedText.parse(parts.body).remove(index).render());
+    text = joinEditable(parts, TaggedText.parse(editableBody(parts)).remove(index).render());
   }
 
   public String rootLinkLabel() {
@@ -128,12 +179,134 @@ public final class EditorState {
     return parts.join(tags.render().stripTrailing());
   }
 
+  public Routing.Catalog routingCatalog(Markdown template) {
+    return new Routing.Catalog(new Markdown(destinationSnapshot), template);
+  }
+
+  public void initializeRoutes(Markdown template) {
+    if (routesInitialized) return;
+    if (fallbackHeading.isEmpty()) fallbackHeading = heading;
+    if (!fresh && FieldBlock.parse(parts().body).present()) editFields = true;
+    var catalog = routingCatalog(template);
+    List<Routing.Choice> choices = new ArrayList<>();
+    choices.add(catalog.resolve(target()));
+    Set<String> headings = new HashSet<>();
+    headings.add(heading);
+    for (var tag : tags())
+      if (tag.kind().equals("crossPeople"))
+        for (var token : catalog.split(tag.ids()))
+          if (token.choice() != null && headings.add(token.choice().target().heading()))
+            choices.add(token.choice());
+    routes = List.copyOf(choices);
+    routesInitialized = true;
+  }
+
+  public List<Routing.Choice> pickerRoutes() {
+    return !routeChosen
+            && routes.size() == 1
+            && kind == Markdown.Kind.SECTION
+            && heading.equals("## Заметки")
+        ? List.of()
+        : routes;
+  }
+
+  public List<String> crossIds() {
+    return routes.size() < 2
+        ? List.of()
+        : routes.subList(1, routes.size()).stream()
+            .map(Routing.Choice::crossId)
+            .collect(java.util.stream.Collectors.toList());
+  }
+
+  public void applyRoutes(List<Routing.Choice> choices, Routing.Catalog catalog) {
+    String error = validateRoutes(choices);
+    if (error != null) throw new IllegalArgumentException(error);
+    if (editFields && !choices.isEmpty() && choices.get(0).target().kind() != Markdown.Kind.SECTION)
+      throw new IllegalArgumentException("Для поля изменяйте значение или раздел");
+    Markdown.Target selected =
+        choices.isEmpty()
+            ? new Markdown.Target(fallbackHeading, fallbackHeading, -1, "", Markdown.Kind.SECTION)
+            : choices.get(0).target();
+    chooseTarget(selected);
+    Parts p = parts();
+    TaggedText body = TaggedText.parse(editableBody(p));
+    List<TaggedText.Tag> keep = new ArrayList<>();
+    for (var tag : body.tags) {
+      if (!tag.kind().equals("crossPeople")) {
+        keep.add(tag);
+        continue;
+      }
+      String unknown =
+          String.join(
+              "",
+              catalog.split(tag.ids()).stream()
+                  .filter(t -> t.choice() == null)
+                  .map(Routing.Token::text)
+                  .collect(java.util.stream.Collectors.toList()));
+      if (!unknown.isEmpty()) keep.add(new TaggedText.Tag(tag.kind(), unknown, tag.position()));
+    }
+    routes = List.copyOf(choices);
+    routeChosen = true;
+    routesInitialized = true;
+    TaggedText updated = body.withTags(keep);
+    if (routes.size() > 1) updated = updated.add(0, crossIds(), false, false);
+    text = joinEditable(p, updated.render());
+  }
+
+  public String validateRoutes(List<Routing.Choice> choices) {
+    String error = Routing.validate(choices);
+    if (error != null) return error;
+    if (!choices.isEmpty()
+        && choices.get(0).target().kind() == Markdown.Kind.FIELD
+        && editableText().contains("\n")) return "Для Dataview-ключа нужен однострочный текст";
+    return null;
+  }
+
+  public void removeRoute(int index, Routing.Catalog catalog) {
+    List<Routing.Choice> next = new ArrayList<>(routes);
+    next.remove(index);
+    applyRoutes(next, catalog);
+  }
+
+  public String unmanagedCrossIds(TaggedText.Tag tag, Routing.Catalog catalog) {
+    if (!tag.kind().equals("crossPeople")) return tag.ids();
+    return String.join(
+        "",
+        catalog.split(tag.ids()).stream()
+            .filter(t -> t.choice() == null)
+            .map(Routing.Token::text)
+            .collect(java.util.stream.Collectors.toList()));
+  }
+
+  public void removeUnmanagedTag(int index, Routing.Catalog catalog) {
+    Parts p = parts();
+    TaggedText body = TaggedText.parse(editableBody(p));
+    var tag = body.tags.get(index);
+    if (!tag.kind().equals("crossPeople")) {
+      removeTag(index);
+      return;
+    }
+    String known =
+        String.join(
+            "",
+            catalog.split(tag.ids()).stream()
+                .filter(t -> t.choice() != null)
+                .map(Routing.Token::text)
+                .collect(java.util.stream.Collectors.toList()));
+    List<TaggedText.Tag> tags = new ArrayList<>(body.tags);
+    if (known.isEmpty()) tags.remove(index);
+    else tags.set(index, new TaggedText.Tag(tag.kind(), known, tag.position()));
+    text = joinEditable(p, body.withTags(tags).render());
+  }
+
   public Markdown.Block originalBlock(Markdown document) {
     return document.blocks.stream()
         .filter(b -> b.start() == start && b.end() == end && b.text().equals(original))
         .findFirst()
         .orElseThrow(
-            () -> new IllegalArgumentException("Исходный блок изменился. Черновик сохранён."));
+            () ->
+                new IllegalArgumentException(
+                    "Исходный блок изменился. Текст остался в редакторе."));
   }
 
   public Markdown.Target target() {

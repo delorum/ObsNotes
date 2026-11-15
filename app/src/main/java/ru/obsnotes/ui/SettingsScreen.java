@@ -3,7 +3,6 @@ package ru.obsnotes.ui;
 import android.view.View;
 import android.widget.LinearLayout;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import ru.obsnotes.R;
 
 public final class SettingsScreen {
   private SettingsScreen() {}
@@ -13,17 +12,12 @@ public final class SettingsScreen {
 
     void chooseVault();
 
-    void draft();
-
-    void deleteDraft();
-
     void recover();
 
     void keepFiles();
   }
 
-  public static void show(
-      Ui ui, String folder, boolean hasDraft, boolean hasRepository, Actions actions) {
+  public static void show(Ui ui, String folder, boolean hasRepository, Actions actions) {
     ui.page("Настройки", actions::back);
     ui.body.addView(
         ui.button(
@@ -44,21 +38,6 @@ public final class SettingsScreen {
                 + "Работает только с существующими днями. Синхронизацией занимается Syncthing.",
             14,
             Ui.MUTED));
-    if (hasDraft) {
-      LinearLayout row = ui.row();
-      ui.weighted(row, ui.button("Открыть черновик", actions::draft));
-      ui.action(
-          row,
-          R.drawable.ic_delete,
-          "Удалить черновик",
-          () ->
-              new MaterialAlertDialogBuilder(ui.activity)
-                  .setMessage("Удалить несохранённый черновик?")
-                  .setPositiveButton("Удалить", (d, w) -> actions.deleteDraft())
-                  .setNegativeButton("Оставить", null)
-                  .show());
-      ui.body.addView(row);
-    }
     if (hasRepository) {
       LinearLayout recovery = ui.column();
       recovery.setVisibility(View.GONE);
@@ -76,7 +55,7 @@ public final class SettingsScreen {
                   new MaterialAlertDialogBuilder(ui.activity)
                       .setMessage(
                           "Завершить журнал без изменения файлов? При прерванном переносе блок"
-                              + " может остаться в обоих днях. Резервные копии и черновик"
+                              + " может остаться в обоих днях. Резервные копии и текст редактора"
                               + " сохранятся.")
                       .setPositiveButton("Принять", (d, w) -> actions.keepFiles())
                       .setNegativeButton("Отмена", null)

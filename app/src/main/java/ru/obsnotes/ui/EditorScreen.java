@@ -1,6 +1,7 @@
 package ru.obsnotes.ui;
 
 import android.widget.*;
+import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import java.util.*;
@@ -16,7 +17,11 @@ public final class EditorScreen {
 
     void changed();
 
-    void target();
+    void sections();
+
+    void routesChanged();
+
+    void today();
 
     void destination();
 
@@ -29,54 +34,92 @@ public final class EditorScreen {
     void related();
   }
 
-  public static void show(Ui ui, EditorState state, Actions actions) {
-    ui.page(state.fresh ? "Новая заметка" : "Текстовый блок", actions::back);
+  public static void show(Ui ui, EditorState state, Markdown template, Actions actions) {
+    String title =
+        state.fieldCount() == 1
+            ? state.fieldName(0)
+            : state.fieldCount() > 1
+                ? "Поля"
+                : state.kind == Markdown.Kind.FIELD
+                    ? state.routingCatalog(template).resolve(state.target()).label()
+                    : state.fresh ? "Новая заметка" : "Текстовый блок";
+    ui.page(title, actions::back);
+    ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
+    Routing.Catalog catalog = state.routingCatalog(template);
     ChipGroup metadata = new ChipGroup(ui.activity);
     metadata.setChipSpacingHorizontal(ui.dp(4));
     metadata.setChipSpacingVertical(0);
-    EditText edit = ui.field(ui.body, "Текст", state.editableText(), true, null);
-    Runnable refreshMetadata = () -> metadata(ui, state, metadata, actions, edit);
-    ui.watch(
-        edit,
-        value -> {
-          state.edit(value);
-          actions.changed();
-          refreshMetadata.run();
-        });
-    edit.setSelection(Math.min(Math.max(0, state.cursor), edit.length()));
+    List<EditText> edits = new ArrayList<>();
+    if (state.fieldCount() > 0)
+      for (int i = 0; i < state.fieldCount(); i++)
+        edits.add(ui.field(ui.body, state.fieldName(i), state.fieldValue(i), false, null));
+    else
+      edits.add(
+          ui.field(
+              ui.body,
+              state.kind == Markdown.Kind.FIELD ? "Значение" : "Текст",
+              state.editableText(),
+              true,
+              null));
+    Runnable refresh = () -> metadata(ui, state, catalog, metadata, actions, edits);
+    for (int i = 0; i < edits.size(); i++) {
+      int index = i;
+      EditText edit = edits.get(i);
+      ui.watch(
+          edit,
+          value -> {
+            if (state.fieldCount() > 0) state.editField(index, value);
+            else state.edit(value);
+            actions.changed();
+            refresh.run();
+          });
+      edit.setOnFocusChangeListener(
+          (v, focused) -> {
+            state.cursor = offset(edits, index) + Math.max(0, edit.getSelectionStart());
+          });
+      int at = state.cursor - offset(edits, i);
+      if (at >= 0 && at <= edit.length()) edit.setSelection(at);
+    }
     ui.body.addView(metadata);
-    refreshMetadata.run();
-    LinearLayout target = ui.row();
-    var day =
+    refresh.run();
+    TextView hint = ui.text(hint(state), 12, Ui.MUTED);
+    LinearLayout dates = ui.row();
+    ui.weighted(
+        dates,
         ui.button(
-            DiaryLayout.fileName(state.destinationPath).substring(0, 10), actions::destination);
-    ui.weighted(target, day);
-    var heading =
-        ui.button(
-            state.kind == Markdown.Kind.SECTION
-                ? state.heading.replaceFirst("^#+ ", "")
-                : state.targetSource,
-            actions::target);
-    heading.setMaxLines(2);
-    heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    ui.weighted(target, heading);
-    ui.body.addView(target);
+            DiaryLayout.fileName(state.destinationPath).substring(0, 10), actions::destination));
+    if (state.kind == Markdown.Kind.TASK) {
+      MaterialCheckBox text = new MaterialCheckBox(ui.activity);
+      text.setText("С текстом");
+      text.setTextColor(Ui.INK);
+      text.setMinHeight(ui.dp(48));
+      text.setChecked(state.appendTaskText);
+      text.setContentDescription("Добавлять текст в задачу");
+      text.setOnCheckedChangeListener(
+          (v, checked) -> {
+            state.appendTaskText = checked;
+            actions.changed();
+            hint.setText(hint(state));
+          });
+      dates.addView(text);
+    }
+    ui.body.addView(dates);
     LinearLayout tags = ui.row();
     ui.weighted(
         tags,
         ui.button(
-            "Допразделы",
+            "Разделы",
             () -> {
-              state.cursor = edit.getSelectionStart();
-              actions.tags(false, false, state.cursor);
+              state.cursor = cursor(edits, state.cursor);
+              actions.sections();
             }));
     ui.weighted(
         tags,
         ui.button(
             "На строку",
             () -> {
-              state.cursor = edit.getSelectionStart();
+              state.cursor = cursor(edits, state.cursor);
               actions.tags(true, false, state.cursor);
             }));
     ui.action(
@@ -84,7 +127,7 @@ public final class EditorScreen {
         ru.obsnotes.R.drawable.ic_person,
         "Тег человека для блока или строки",
         () -> {
-          state.cursor = edit.getSelectionStart();
+          state.cursor = cursor(edits, state.cursor);
           new com.google.android.material.dialog.MaterialAlertDialogBuilder(ui.activity)
               .setItems(
                   new String[] {"Человек · весь блок", "Человек · текущая строка"},
@@ -101,39 +144,73 @@ public final class EditorScreen {
     ui.weighted(relations, ui.button("Связать", actions::link));
     ui.action(relations, ru.obsnotes.R.drawable.ic_link, "Показать связи", actions::related);
     ui.body.addView(relations);
-    ui.body.addView(
-        ui.text("Назад оставляет черновик. Метки и связи — под текстом.", 12, Ui.MUTED));
-    edit.setOnFocusChangeListener(
-        (v, focused) -> {
-          state.cursor = edit.getSelectionStart();
-          actions.changed();
-        });
+    ui.body.addView(hint);
+  }
+
+  private static String hint(EditorState state) {
+    return state.taskOnly()
+        ? (state.fresh
+            ? "Будет сохранена только отметка выполнения задачи."
+            : "Задача будет отмечена без текста. Исходный блок уберётся из прежнего раздела.")
+        : "Изменения сохраняются при выходе. Метки и связи — под текстом.";
+  }
+
+  private static int offset(List<EditText> edits, int index) {
+    int at = 0;
+    for (int i = 0; i < index; i++) at += edits.get(i).length() + 1;
+    return at;
+  }
+
+  private static int cursor(List<EditText> edits, int fallback) {
+    for (int i = 0; i < edits.size(); i++)
+      if (edits.get(i).hasFocus())
+        return offset(edits, i) + Math.max(0, edits.get(i).getSelectionStart());
+    return fallback;
   }
 
   private static void metadata(
-      Ui ui, EditorState state, ChipGroup group, Actions actions, EditText edit) {
-    highlight(edit, state);
+      Ui ui,
+      EditorState state,
+      Routing.Catalog catalog,
+      ChipGroup group,
+      Actions actions,
+      List<EditText> edits) {
+    highlight(edits, state);
     group.removeAllViews();
+    for (int i = 0; i < state.routes.size(); i++) {
+      int index = i;
+      var route = state.routes.get(i);
+      Chip chip = chip(ui, route.label(), i == 0 ? Ui.INK : Ui.ACCENT);
+      chip.setCloseIconContentDescription("Удалить раздел: " + route.label());
+      chip.setOnCloseIconClickListener(
+          v -> {
+            state.cursor = cursor(edits, state.cursor);
+            state.removeRoute(index, catalog);
+            actions.routesChanged();
+          });
+      group.addView(chip);
+    }
     List<TaggedText.Tag> tags = state.tags();
     String clean = state.editableText();
     List<Integer> order = new ArrayList<>();
     for (int i = 0; i < tags.size(); i++) order.add(i);
-    order.sort(java.util.Comparator.comparingInt(i -> tags.get(i).oneLine() ? 1 : 0));
+    order.sort(Comparator.comparingInt(i -> tags.get(i).oneLine() ? 1 : 0));
     for (int i : order) {
       int index = i;
       var tag = tags.get(i);
-      String label = tag.ids();
+      String label = state.unmanagedCrossIds(tag, catalog);
+      if (label.isEmpty()) continue;
       int color = Ui.ACCENT;
       for (var mark : LineMarks.of(clean, tags))
         if (tag.oneLine() && mark.line() == tag.line(clean)) color = lineColor(mark.colorIndex());
       Chip chip = chip(ui, label, color);
-      if (tag.oneLine()) chip.setContentDescription(tag.ids() + ", строка " + tag.line(clean));
-      else chip.setContentDescription(tag.ids() + ", весь блок");
+      chip.setContentDescription(
+          label + (tag.oneLine() ? ", строка " + tag.line(clean) : ", весь блок"));
       chip.setOnCloseIconClickListener(
           v -> {
-            state.removeTag(index);
+            state.removeUnmanagedTag(index, catalog);
             actions.changed();
-            metadata(ui, state, group, actions, edit);
+            metadata(ui, state, catalog, group, actions, edits);
           });
       group.addView(chip);
     }
@@ -145,7 +222,7 @@ public final class EditorScreen {
           v -> {
             state.removeRootLink();
             actions.changed();
-            metadata(ui, state, group, actions, edit);
+            metadata(ui, state, catalog, group, actions, edits);
           });
       group.addView(chip);
     }
@@ -161,25 +238,30 @@ public final class EditorScreen {
     return LINE_COLORS[index % LINE_COLORS.length];
   }
 
-  private static void highlight(EditText edit, EditorState state) {
-    android.text.Editable text = edit.getText();
-    for (var span : text.getSpans(0, text.length(), android.text.style.ForegroundColorSpan.class))
-      text.removeSpan(span);
-    for (var mark : LineMarks.of(state.editableText(), state.tags())) {
-      int start = Math.min(mark.start(), text.length()), end = Math.min(mark.end(), text.length());
-      if (end == start && end < text.length()) end++;
-      if (end > start)
-        text.setSpan(
-            new android.text.style.ForegroundColorSpan(lineColor(mark.colorIndex())),
-            start,
-            end,
-            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+  private static void highlight(List<EditText> edits, EditorState state) {
+    for (int i = 0; i < edits.size(); i++) {
+      android.text.Editable text = edits.get(i).getText();
+      for (var span : text.getSpans(0, text.length(), android.text.style.ForegroundColorSpan.class))
+        text.removeSpan(span);
+      int offset = offset(edits, i);
+      for (var mark : LineMarks.of(state.editableText(), state.tags())) {
+        int start = Math.max(0, mark.start() - offset),
+            end = Math.min(text.length(), mark.end() - offset);
+        if (start < end)
+          text.setSpan(
+              new android.text.style.ForegroundColorSpan(lineColor(mark.colorIndex())),
+              start,
+              end,
+              android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      }
     }
   }
 
   private static Chip chip(Ui ui, String label, int color) {
     Chip chip = new Chip(ui.activity);
     chip.setText(label);
+    chip.setMaxWidth(ui.dp(310));
+    chip.setEllipsize(android.text.TextUtils.TruncateAt.END);
     chip.setTextColor(color);
     chip.setChipBackgroundColor(
         android.content.res.ColorStateList.valueOf(

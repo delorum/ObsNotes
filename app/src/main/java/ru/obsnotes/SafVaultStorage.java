@@ -59,7 +59,14 @@ public final class SafVaultStorage implements VaultStorage {
     if ("com.android.externalstorage.documents".equals(tree.getAuthority()))
       return DocumentsContract.buildDocumentUriUsingTree(
           tree, root + (root.endsWith(":") ? "" : "/") + path);
-    Uri current = DocumentsContract.buildDocumentUriUsingTree(tree, root);
+    return resolveByComponents(path);
+  }
+
+  /** Fallback also distinguishes a missing document from an expired grant on ExternalStorage. */
+  private Uri resolveByComponents(String path) throws IOException {
+    Uri current =
+        DocumentsContract.buildDocumentUriUsingTree(
+            tree, DocumentsContract.getTreeDocumentId(tree));
     for (String part : path.split("/")) {
       Entry found = null;
       for (Entry e : children(current))
@@ -86,6 +93,18 @@ public final class SafVaultStorage implements VaultStorage {
         out.write(buffer, 0, n);
       }
       return out.toString(StandardCharsets.UTF_8.name());
+    } catch (SecurityException | IllegalArgumentException failure) {
+      // ExternalStorage's enforceTree can wrap FileNotFoundException as a runtime error.
+      // Check only the named path components on this failure; never scan the diary archive.
+      if ("com.android.externalstorage.documents".equals(tree.getAuthority())) {
+        try {
+          resolveByComponents(path);
+        } catch (FileNotFoundException missing) {
+          missing.initCause(failure);
+          throw missing;
+        }
+      }
+      throw failure;
     }
   }
 

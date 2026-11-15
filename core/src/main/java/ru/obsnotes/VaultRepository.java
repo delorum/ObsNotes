@@ -18,11 +18,7 @@ public final class VaultRepository {
 
   public static final class Conflict extends IOException {
     public Conflict(String path) {
-      super(
-          "Файл изменён извне: "
-              + DiaryLayout.fileName(path)
-              + ". Черновик сохранён; откройте свежий день и скопируйте нужный текст из"
-              + " черновика.");
+      super("Файл изменён извне: " + DiaryLayout.fileName(path) + ". Текст остался в редакторе.");
     }
   }
 
@@ -80,7 +76,7 @@ public final class VaultRepository {
   }
 
   public static List<Change> addRoot(List<Change> changes, EditorState state) {
-    if (state.rootPath.isEmpty()) return changes;
+    if (state.taskOnly() || state.rootPath.isEmpty()) return changes;
     List<Change> result = new ArrayList<>(changes);
     int existing = -1;
     for (int i = 0; i < result.size(); i++)
@@ -108,10 +104,18 @@ public final class VaultRepository {
       Markdown template,
       LocalDate date,
       LocalDateTime now) {
-    String text = state.savedText();
-    if (text.isEmpty()) throw new IllegalArgumentException("Введите текст");
     boolean same = state.sourcePath.equals(state.destinationPath);
     Markdown.Block block = state.fresh ? null : state.originalBlock(source);
+    if (!state.taskOnly() && state.emptyNote()) {
+      if (block == null) return List.of();
+      if (!Events.id(block.text()).isEmpty())
+        throw new IllegalArgumentException("Блок с якорем нельзя удалить");
+      return clean(
+          List.of(new Change(state.sourcePath, source.text, source.replace(block, "").text)));
+    }
+    String text = state.taskOnly() ? "" : state.savedText();
+    if (state.taskOnly() && block != null && !Events.id(block.text()).isEmpty())
+      throw new IllegalArgumentException("Блок с якорем нельзя убрать при отметке задачи");
     if (!same && (!Events.id(text).isEmpty() || text.contains("[[#^")))
       throw new IllegalArgumentException(
           "Корневой блок или локальную ссылку нельзя переносить между днями: ссылки должны"
@@ -120,7 +124,10 @@ public final class VaultRepository {
         && same
         && state.kind == Markdown.Kind.SECTION
         && block.section().heading().equals(state.heading))
-      return List.of(new Change(state.sourcePath, source.text, source.replace(block, text).text));
+      return finish(
+          List.of(new Change(state.sourcePath, source.text, source.replace(block, text).text)),
+          state,
+          false);
     Markdown from = state.fresh ? source : source.replace(block, "");
     Markdown to = same ? from : destination;
     Markdown.Target target = state.target();
@@ -146,10 +153,32 @@ public final class VaultRepository {
               text.lines()
                   .map(line -> "~~" + line + "~~")
                   .collect(java.util.stream.Collectors.toList()));
-    Markdown result = to.insert(target, payload, date, template);
-    if (same) return List.of(new Change(state.sourcePath, source.text, result.text));
-    return List.of(
-        new Change(state.destinationPath, destination.text, result.text),
-        new Change(state.sourcePath, source.text, from.text));
+    Markdown result =
+        state.taskOnly()
+            ? to.completeTask(target, "", state.crossIds(), date)
+            : to.insert(target, payload, date, template);
+    if (same)
+      return finish(List.of(new Change(state.sourcePath, source.text, result.text)), state, true);
+    return finish(
+        List.of(
+            new Change(state.destinationPath, destination.text, result.text),
+            new Change(state.sourcePath, source.text, from.text)),
+        state,
+        true);
+  }
+
+  private static List<Change> finish(List<Change> changes, EditorState state, boolean compact) {
+    List<Change> result = addRoot(changes, state);
+    return compact ? clean(result) : result;
+  }
+
+  private static List<Change> clean(List<Change> changes) {
+    return changes.stream()
+        .map(
+            c ->
+                c.before.equals(c.after)
+                    ? c
+                    : new Change(c.path, c.before, DiaryCleanup.compress(c.after)))
+        .collect(java.util.stream.Collectors.toList());
   }
 }

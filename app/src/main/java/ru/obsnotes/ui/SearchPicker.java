@@ -3,11 +3,15 @@ package ru.obsnotes.ui;
 import android.app.Dialog;
 import android.view.*;
 import android.widget.*;
+import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.*;
 import java.util.function.*;
+import ru.obsnotes.*;
 
-/** One searchable list for headings, tasks, dates, tags and events. */
+/**
+ * Label tap applies immediately; checkboxes stage ordered multi-selection. Apply stays above IME.
+ */
 public final class SearchPicker {
   private SearchPicker() {}
 
@@ -18,55 +22,120 @@ public final class SearchPicker {
       Function<T, String> label,
       boolean multi,
       Consumer<List<T>> select) {
+    show(ui, title, items, label, multi, List.of(), ignored -> null, select);
+  }
+
+  public static <T> void show(
+      Ui ui,
+      String title,
+      List<T> items,
+      Function<T, String> label,
+      boolean multi,
+      List<T> initial,
+      Function<List<T>, String> validate,
+      Consumer<List<T>> select) {
     LinearLayout layout = ui.column();
     layout.setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(8));
+    PickerSelection<T> selection = new PickerSelection<>(initial);
+    Dialog dialog = new MaterialAlertDialogBuilder(ui.activity).setView(layout).create();
+    Consumer<List<T>> apply =
+        chosen -> {
+          String error = validate.apply(chosen);
+          if (error != null) {
+            Toast.makeText(ui.activity, error, Toast.LENGTH_SHORT).show();
+            return;
+          }
+          dialog.dismiss();
+          select.accept(chosen);
+        };
+    if (multi) {
+      LinearLayout header = ui.row();
+      TextView caption = ui.bold(title, 20, Ui.INK);
+      caption.setMaxLines(2);
+      ui.weighted(header, caption);
+      ui.action(
+          header,
+          ru.obsnotes.R.drawable.ic_save,
+          "Применить выбранное",
+          () -> apply.accept(selection.selected()));
+      layout.addView(header);
+    } else dialog.setTitle(title);
     EditText search = ui.field(layout, "Поиск", "", false, null);
     ListView list = new ListView(ui.activity);
     list.setDivider(null);
-    layout.addView(list, new LinearLayout.LayoutParams(-1, ui.dp(340)));
-    LinkedHashSet<T> selected = new LinkedHashSet<>();
+    int height =
+        Math.max(
+            100, Math.min(340, ui.activity.getResources().getConfiguration().screenHeightDp - 230));
+    layout.addView(list, new LinearLayout.LayoutParams(-1, ui.dp(height)));
     List<T> filtered = new ArrayList<>();
-    var builder = new MaterialAlertDialogBuilder(ui.activity).setTitle(title).setView(layout);
-    if (multi)
-      builder.setPositiveButton(
-          "Вставить", (dialog, which) -> select.accept(List.copyOf(selected)));
-    Dialog dialog = builder.create();
-    Runnable filter =
-        () -> {
-          String query = search.getText().toString().strip().toLowerCase(Locale.ROOT);
-          filtered.clear();
-          for (T item : items)
-            if (label.apply(item).toLowerCase(Locale.ROOT).contains(query)) filtered.add(item);
-          list.setAdapter(
-              new ArrayAdapter<>(
-                  ui.activity,
-                  multi
-                      ? android.R.layout.simple_list_item_multiple_choice
-                      : android.R.layout.simple_list_item_1,
-                  filtered.stream().map(label).collect(java.util.stream.Collectors.toList())));
-          if (multi) {
-            list.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
-            for (int i = 0; i < filtered.size(); i++)
-              list.setItemChecked(i, selected.contains(filtered.get(i)));
+    BaseAdapter adapter =
+        new BaseAdapter() {
+          public int getCount() {
+            return filtered.size();
+          }
+
+          public T getItem(int at) {
+            return filtered.get(at);
+          }
+
+          public long getItemId(int at) {
+            return at;
+          }
+
+          public View getView(int at, View old, ViewGroup parent) {
+            T item = filtered.get(at);
+            LinearLayout row = ui.row();
+            row.setMinimumHeight(ui.dp(48));
+            TextView text = ui.text(label.apply(item), 16, Ui.INK);
+            text.setMinHeight(ui.dp(48));
+            text.setGravity(Gravity.CENTER_VERTICAL);
+            ui.weighted(row, text);
+            Runnable quick =
+                () -> {
+                  List<T> chosen = new ArrayList<>(selection.selected());
+                  if (!chosen.contains(item)) chosen.add(item);
+                  apply.accept(multi ? List.copyOf(chosen) : List.of(item));
+                };
+            row.setOnClickListener(v -> quick.run());
+            text.setOnClickListener(v -> quick.run());
+            if (multi) {
+              MaterialCheckBox check = new MaterialCheckBox(ui.activity);
+              check.setChecked(selection.contains(item));
+              check.setContentDescription("Выбрать: " + label.apply(item));
+              check.setOnClickListener(
+                  v -> {
+                    List<T> chosen = new ArrayList<>(selection.selected());
+                    if (!chosen.remove(item)) chosen.add(item);
+                    String error = validate.apply(chosen);
+                    if (error != null) {
+                      check.setChecked(selection.contains(item));
+                      Toast.makeText(ui.activity, error, Toast.LENGTH_SHORT).show();
+                      return;
+                    }
+                    selection.set(chosen);
+                  });
+              row.addView(check, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
+            }
+            return row;
           }
         };
-    list.setOnItemClickListener(
-        (parent, view, pos, id) -> {
-          T item = filtered.get(pos);
-          if (multi) {
-            if (!selected.remove(item)) selected.add(item);
-            list.setItemChecked(pos, selected.contains(item));
-          } else {
-            dialog.dismiss();
-            select.accept(List.of(item));
-          }
-        });
+    list.setAdapter(adapter);
+    Runnable filter =
+        () -> {
+          filtered.clear();
+          String query = search.getText().toString();
+          for (T item : items)
+            if (FuzzySearch.matches(label.apply(item), query)) filtered.add(item);
+          adapter.notifyDataSetChanged();
+        };
     ui.watch(search, value -> filter.run());
     filter.run();
     dialog.show();
     if (dialog.getWindow() != null)
       dialog
           .getWindow()
-          .setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+          .setSoftInputMode(
+              WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                  | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
   }
 }
