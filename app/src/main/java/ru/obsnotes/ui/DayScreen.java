@@ -74,55 +74,67 @@ public final class DayScreen {
       ui.body.addView(ui.text("За этот день заметка ещё не создана", 16, Ui.MUTED));
       return;
     }
-    LinkedHashMap<String, String> sections = new LinkedHashMap<>();
-    sections.put("## Заметки", "Заметки");
-    for (Markdown.Section s : template.sections) sections.put(s.heading(), s.title());
-    for (Markdown.Section s : document.sections) sections.putIfAbsent(s.heading(), s.title());
-    for (var section : sections.entrySet()) {
-      String heading = section.getKey();
-      List<Markdown.Block> blocks =
-          document.blocks.stream()
-              .filter(b -> b.section().heading().equals(heading))
-              .collect(java.util.stream.Collectors.toList());
-      List<CrossReferences.Projection> projected =
-          CrossReferences.project(document, template, heading);
-      LinearLayout card = ui.card(ui.body), header = ui.row(), content = ui.column();
-      boolean open = expanded.contains(heading);
-      var disclosure =
-          ui.icon(
-              open ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right,
-              "Развернуть раздел " + section.getValue(),
-              () -> {});
-      header.addView(disclosure, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
-      TextView title =
-          ui.bold(
-              section.getValue() + " · " + (blocks.size() + projected.size()),
-              16,
-              blocks.isEmpty() && heading.equals("## Заметки") ? Ui.GREEN : Ui.INK);
-      ui.weighted(header, title);
-      if (heading.equals("## Заметки"))
-        ui.action(header, ru.obsnotes.R.drawable.ic_add, "Новая заметка", actions::add);
-      Runnable toggle =
-          () -> {
-            boolean visible = content.getVisibility() != View.VISIBLE;
-            content.setVisibility(visible ? View.VISIBLE : View.GONE);
-            if (visible) expanded.add(heading);
-            else expanded.remove(heading);
-            disclosure.setIcon(
-                androidx.appcompat.content.res.AppCompatResources.getDrawable(
-                    ui.activity,
-                    visible ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right));
-          };
-      header.setOnClickListener(v -> toggle.run());
-      disclosure.setOnClickListener(v -> toggle.run());
-      card.addView(header);
-      card.addView(content);
-      content.setVisibility(open ? View.VISIBLE : View.GONE);
-      for (Markdown.Block b : blocks)
-        block(ui, content, b, CrossReferences.clean(b.text()), false, expanded, actions);
-      for (var p : projected) block(ui, content, p.origin(), p.text(), true, expanded, actions);
-      if (blocks.isEmpty() && projected.isEmpty()) content.addView(ui.text("Пусто", 14, Ui.MUTED));
-    }
+    for (DayOutline.Section section : DayOutline.sections(document, template))
+      section(ui, ui.body, section, expanded, actions);
+  }
+
+  private static void section(
+      Ui ui,
+      LinearLayout parent,
+      DayOutline.Section section,
+      Set<String> expanded,
+      Actions actions) {
+    String heading = section.heading();
+    LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
+    boolean open = expanded.contains(heading);
+    boolean[] populated = {false};
+    Runnable populate =
+        () -> {
+          if (populated[0]) return;
+          populated[0] = true;
+          for (var b : section.blocks())
+            block(ui, content, b, CrossReferences.clean(b.text()), false, expanded, actions);
+          for (var p : section.projections())
+            block(ui, content, p.origin(), p.text(), true, expanded, actions);
+          for (var child : section.children()) section(ui, content, child, expanded, actions);
+          if (section.count() == 0 && section.children().isEmpty())
+            content.addView(ui.text("Пусто", 14, Ui.MUTED));
+        };
+    var disclosure =
+        ui.icon(
+            open ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right,
+            "Развернуть раздел " + section.title(),
+            () -> {});
+    header.addView(disclosure, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
+    ui.weighted(
+        header,
+        ui.bold(
+            section.title() + " · " + section.count(),
+            16,
+            section.count() == 0 && heading.equals("## Заметки") ? Ui.GREEN : Ui.INK));
+    if (heading.equals("## Заметки"))
+      ui.action(header, ru.obsnotes.R.drawable.ic_add, "Новая заметка", actions::add);
+    Runnable toggle =
+        () -> {
+          boolean visible = content.getVisibility() != View.VISIBLE;
+          if (visible) {
+            populate.run();
+            expanded.add(heading);
+          } else expanded.remove(heading);
+          content.setVisibility(visible ? View.VISIBLE : View.GONE);
+          disclosure.setIcon(
+              androidx.appcompat.content.res.AppCompatResources.getDrawable(
+                  ui.activity,
+                  visible ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right));
+        };
+    header.setOnClickListener(v -> toggle.run());
+    disclosure.setOnClickListener(v -> toggle.run());
+    card.addView(header);
+    LinearLayout.LayoutParams contentLayout = new LinearLayout.LayoutParams(-1, -2);
+    contentLayout.topMargin = ui.dp(8);
+    card.addView(content, contentLayout);
+    content.setVisibility(open ? View.VISIBLE : View.GONE);
+    if (open) populate.run();
   }
 
   private static void block(
@@ -171,6 +183,8 @@ public final class DayScreen {
     box.addView(row);
     box.addView(full);
     full.setOnClickListener(v -> actions.edit(block));
-    parent.addView(box);
+    LinearLayout.LayoutParams blockLayout = new LinearLayout.LayoutParams(-1, -2);
+    blockLayout.bottomMargin = ui.dp(8);
+    parent.addView(box, blockLayout);
   }
 }

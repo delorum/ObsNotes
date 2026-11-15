@@ -1,5 +1,6 @@
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.*;
 import ru.obsnotes.*;
 
 /** Read-only compatibility smoke check. Prints aggregates, never diary contents. */
@@ -8,7 +9,7 @@ public final class CheckVault {
     Path vault = Path.of(args[0]);
     Markdown template =
         TemplateCatalog.parse(Files.readString(vault.resolve(TemplateCatalog.PATH)));
-    int files = 0, blocks = 0, roots = 0;
+    int files = 0, blocks = 0, roots = 0, tagged = 0;
     try (var paths = Files.walk(vault.resolve("Дневник/Хроника"))) {
       for (Path path :
           paths
@@ -21,6 +22,18 @@ public final class CheckVault {
             throw new AssertionError("Identity replacement changed bytes");
           blocks++;
           if (!Events.id(b.text()).isEmpty()) roots++;
+          if (b.text().matches("(?s).*#(?:crossPeople|crossOneLine|person|personOneLine)/.*")) {
+            EditorState state = new EditorState();
+            state.text = b.text();
+            if (!state.editableText().isBlank()) {
+              state.edit(state.editableText());
+              if (!tags(b.text()).equals(tags(state.savedText())))
+                throw new AssertionError("Clean editor changed tag meanings");
+              if (!Events.id(b.text()).equals(Events.id(state.savedText())))
+                throw new AssertionError("Clean editor changed block anchor");
+              tagged++;
+            }
+          }
         }
         files++;
       }
@@ -36,5 +49,18 @@ public final class CheckVault {
         roots,
         template.sections.size(),
         CrossReferences.destinations(template).size());
+    System.out.println("Clean editor tag round-trip: " + tagged + " blocks passed.");
+  }
+
+  private static Map<String, Integer> tags(String text) {
+    Map<String, Integer> result = new HashMap<>();
+    Matcher tags =
+        Pattern.compile("#(crossPeople|crossOneLine|person|personOneLine)/([\\p{L}\\d]+)")
+            .matcher(text);
+    while (tags.find()) {
+      int line = (int) text.substring(0, tags.start()).chars().filter(c -> c == '\n').count();
+      result.merge(tags.group(1) + "/" + tags.group(2) + "/" + line, 1, Integer::sum);
+    }
+    return result;
   }
 }

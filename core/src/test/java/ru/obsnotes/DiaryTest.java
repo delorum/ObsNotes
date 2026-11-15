@@ -330,7 +330,7 @@ public class DiaryTest {
     s.edit("новый текст #crossPeople/Утро");
     assertEquals(id, Events.id(s.text));
     assertTrue(s.text.contains("outLinkInfo"));
-    assertEquals("новый текст #crossPeople/Утро", s.editableText());
+    assertEquals("новый текст", s.editableText());
   }
 
   static EditorState editing(Markdown doc) {

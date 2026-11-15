@@ -27,7 +27,6 @@ public final class MainActivity extends AppCompatActivity {
   private String vault = "", path = "", screen = "day", lastError;
   private LocalDate day = LocalDate.now();
   private Markdown template = new Markdown(""), document;
-  private List<String> notes = List.of();
   private EditorState editor;
   private boolean busy = false, connected = false;
   private final Set<String> expanded = new HashSet<>(Set.of("## Заметки"));
@@ -137,50 +136,39 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private record Loaded(
-      SafVaultStorage storage, VaultRepository repository, Markdown template, List<String> notes) {}
+      SafVaultStorage storage,
+      VaultRepository repository,
+      DiaryIndex index,
+      DiaryIndex.Opened opened) {}
 
   private void connect(String value, boolean restoreEditor) {
     work(
         () -> {
           SafVaultStorage s = new SafVaultStorage(this, Uri.parse(value));
           s.validate();
-          Markdown t = TemplateCatalog.parse(s.read(TemplateCatalog.PATH));
-          if (t.section("## Заметки") == null)
-            throw new IOException("В шаблоне не найден раздел Заметки");
           String folder =
               UUID.nameUUIDFromBytes(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                   .toString();
           VaultRepository r =
               new VaultRepository(
                   s, new FileJournal(new File(getFilesDir(), "journals/" + folder).toPath()));
-          return new Loaded(s, r, t, s.dailyNotes());
+          r.recover();
+          DiaryIndex next = new DiaryIndex();
+          return new Loaded(s, r, next, next.open(s, day));
         },
         loaded -> {
           storage = loaded.storage;
           repository = loaded.repository;
-          template = loaded.template;
-          notes = loaded.notes;
+          template = loaded.opened.template();
+          document = loaded.opened.document();
+          path = loaded.opened.path();
           vault = value;
           connected = true;
-          index = new DiaryIndex();
+          index = loaded.index;
           prefs.edit().putString("vault", value).apply();
-          work(
-              () -> {
-                repository.recover();
-                return true;
-              },
-              ok -> {
-                if (restoreEditor && drafts.load(vault) != null) resumeDraft();
-                else loadDay();
-              });
+          if (restoreEditor && drafts.load(vault) != null) resumeDraft();
+          else showDay();
         });
-  }
-
-  private String pathFor(LocalDate date) {
-    return notes.stream()
-        .filter(p -> DiaryLayout.fileName(p).startsWith(date.toString() + "-"))
-        .findFirst()
-        .orElse(DiaryLayout.path(date));
   }
 
   private void loadDay() {
@@ -188,7 +176,7 @@ public final class MainActivity extends AppCompatActivity {
       showDay();
       return;
     }
-    path = pathFor(day);
+    path = DiaryLayout.path(day);
     String requested = path;
     work(
         () -> {
@@ -295,13 +283,7 @@ public final class MainActivity extends AppCompatActivity {
           }
 
           public void refresh() {
-            if (!busy)
-              work(
-                  () -> storage.dailyNotes(),
-                  list -> {
-                    notes = list;
-                    loadDay();
-                  });
+            if (!busy) loadDay();
           }
         });
     if (lastError != null) ui.error(lastError);
@@ -425,35 +407,39 @@ public final class MainActivity extends AppCompatActivity {
 
   private void pickDestination() {
     if (busy) return;
-    work(
-        () -> storage.dailyNotes(),
-        list -> {
-          notes = list;
-          String sourceDate = DiaryLayout.fileName(editor.sourcePath).substring(0, 10);
-          List<String> past =
-              list.stream()
-                  .filter(
-                      p ->
-                          p.equals(editor.sourcePath)
-                              || DiaryLayout.fileName(p).substring(0, 10).compareTo(sourceDate) < 0)
-                  .collect(java.util.stream.Collectors.toList());
-          SearchPicker.show(
-              ui,
-              "Перенести в существующий день",
-              past,
-              DiaryLayout::fileName,
-              false,
-              selected -> {
-                String chosen = selected.get(0);
-                work(
-                    () -> storage.read(chosen),
-                    text -> {
-                      editor.chooseDay(chosen, text);
-                      drafts.save(editor, vault);
-                      showEditor();
-                    });
-              });
-        });
+    LocalDate source = LocalDate.parse(DiaryLayout.fileName(editor.sourcePath).substring(0, 10));
+    SafVaultStorage chosenStorage = storage;
+    PastDayPicker.show(
+        ui,
+        source,
+        (from, loaded, failed) ->
+            io.execute(
+                () -> {
+                  try {
+                    PastDays.Page page = PastDays.load(chosenStorage, from);
+                    runOnUiThread(
+                        () -> {
+                          if (!isDestroyed()) loaded.accept(page);
+                        });
+                  } catch (Exception error) {
+                    runOnUiThread(
+                        () -> {
+                          if (!isDestroyed())
+                            failed.accept(
+                                error.getMessage() == null
+                                    ? "Не удалось загрузить дни"
+                                    : error.getMessage());
+                        });
+                  }
+                }),
+        selected ->
+            work(
+                () -> index.day(storage, selected.date()),
+                loaded -> {
+                  editor.chooseDay(loaded.path(), loaded.document().text);
+                  drafts.save(editor, vault);
+                  showEditor();
+                }));
   }
 
   private void pickTags(boolean oneLine, boolean person, int cursor) {
@@ -465,15 +451,13 @@ public final class MainActivity extends AppCompatActivity {
         d -> d.id() + " · " + d.title(),
         true,
         selected -> {
-          editor.text =
-              CrossReferences.tag(
-                  editor.text,
-                  cursor,
-                  selected.stream()
-                      .map(CrossReferences.Destination::id)
-                      .collect(java.util.stream.Collectors.toList()),
-                  oneLine,
-                  person);
+          editor.addTags(
+              cursor,
+              selected.stream()
+                  .map(CrossReferences.Destination::id)
+                  .collect(java.util.stream.Collectors.toList()),
+              oneLine,
+              person);
           drafts.save(editor, vault);
           showEditor();
         });

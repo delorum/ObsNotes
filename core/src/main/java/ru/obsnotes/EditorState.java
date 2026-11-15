@@ -1,5 +1,8 @@
 package ru.obsnotes;
 
+import java.util.*;
+import java.util.regex.*;
+
 /** Form state belongs to core. Android widgets are merely its projection. */
 public final class EditorState {
   public String sourcePath = "",
@@ -53,30 +56,76 @@ public final class EditorState {
     text = linked;
   }
 
-  /** Generated event callout and stable anchor are metadata, not text-editing controls. */
+  private record Parts(String link, String body, String anchor, String callout) {
+    String join(String value) {
+      return link + value + (anchor.isEmpty() ? "" : " ^" + anchor) + callout;
+    }
+  }
+
+  private Parts parts() {
+    String value = text.replace("\r\n", "\n");
+    int at = value.indexOf("\n> [!info]- Дополнения к событию");
+    String callout = at < 0 ? "" : value.substring(at),
+        body = at < 0 ? value : value.substring(0, at);
+    Matcher anchor = Pattern.compile("(?:^|[ \t]+)\\^([A-Za-z0-9_-]+)[ \t]*$").matcher(body);
+    String id = "";
+    if (anchor.find()) {
+      id = anchor.group(1);
+      body = body.substring(0, anchor.start());
+    }
+    Matcher link = Pattern.compile("^\\[\\[[^\\n]*#\\^[^\\n]*]]\\n").matcher(body);
+    String prefix = "";
+    if (link.find()) {
+      prefix = link.group();
+      body = body.substring(link.end());
+    }
+    return new Parts(prefix, body, id, callout);
+  }
+
   public String editableText() {
-    String normalized = text.replace("\r\n", "\n");
-    int at = normalized.indexOf("\n> [!info]- Дополнения к событию");
-    String content = at < 0 ? normalized : normalized.substring(0, at);
-    return content.replaceFirst("[ \\t]+\\^[A-Za-z0-9_-]+[ \\t]*$", "");
+    return TaggedText.parse(parts().body).clean;
+  }
+
+  public List<TaggedText.Tag> tags() {
+    return TaggedText.parse(parts().body).tags;
   }
 
   public void edit(String value) {
-    text = text.replace("\r\n", "\n");
-    String id = Events.id(text);
-    int at = text.indexOf("\n> [!info]- Дополнения к событию");
-    String metadata = at < 0 ? "" : text.substring(at);
-    text = value + (id.isEmpty() ? "" : " ^" + id) + metadata;
+    Parts parts = parts();
+    text = parts.join(TaggedText.parse(parts.body).edit(value).render());
+  }
+
+  public void addTags(int cursor, Collection<String> ids, boolean oneLine, boolean person) {
+    Parts parts = parts();
+    text = parts.join(TaggedText.parse(parts.body).add(cursor, ids, oneLine, person).render());
+  }
+
+  public void removeTag(int index) {
+    Parts parts = parts();
+    text = parts.join(TaggedText.parse(parts.body).remove(index).render());
+  }
+
+  public String rootLinkLabel() {
+    String link = parts().link;
+    if (link.isEmpty()) return "";
+    int alias = link.indexOf('|');
+    return alias < 0 ? "Корневой блок" : link.substring(alias + 1, link.lastIndexOf("]]"));
+  }
+
+  public void removeRootLink() {
+    Parts p = parts();
+    text = new Parts("", p.body, p.anchor, p.callout).join(p.body);
+    rootPath = "";
+    rootOriginal = "";
+    rootReplacement = "";
+    rootSnapshot = "";
   }
 
   public String savedText() {
-    String visible = editableText();
-    if (visible.isBlank()) throw new IllegalArgumentException("Введите текст");
-    String id = Events.id(text);
-    if (id.isEmpty()) return text.stripTrailing();
-    String normalized = text.replace("\r\n", "\n");
-    int at = normalized.indexOf("\n> [!info]- Дополнения к событию");
-    return visible.stripTrailing() + " ^" + id + (at < 0 ? "" : normalized.substring(at));
+    Parts parts = parts();
+    TaggedText tags = TaggedText.parse(parts.body);
+    if (tags.clean.isBlank()) throw new IllegalArgumentException("Введите текст");
+    return parts.join(tags.render().stripTrailing());
   }
 
   public Markdown.Block originalBlock(Markdown document) {

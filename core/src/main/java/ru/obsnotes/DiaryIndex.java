@@ -1,10 +1,35 @@
 package ru.obsnotes;
 
 import java.io.*;
+import java.time.LocalDate;
 import java.util.*;
 
 /** Reuses parsed daily notes while retaining explicit freshness checks for every write. */
 public final class DiaryIndex {
+  public record Opened(Markdown template, Markdown document, String path) {}
+
+  public record Day(String path, Markdown document) {}
+
+  public Day day(VaultStorage storage, LocalDate date) throws IOException {
+    String path = DiaryLayout.path(date);
+    return new Day(path, read(storage, path));
+  }
+
+  /** Opening a day must not scan the archive; date lists are requested separately. */
+  public Opened open(VaultStorage storage, LocalDate date) throws IOException {
+    Markdown template = TemplateCatalog.parse(storage.read(TemplateCatalog.PATH));
+    if (template.section("## Заметки") == null)
+      throw new IOException("В шаблоне не найден раздел Заметки");
+    String path = DiaryLayout.path(date);
+    Markdown document;
+    try {
+      document = day(storage, date).document();
+    } catch (FileNotFoundException missing) {
+      document = null;
+    }
+    return new Opened(template, document, path);
+  }
+
   private record Cached(String source, Markdown document) {}
 
   private final Map<String, Cached> cache = new HashMap<>();
