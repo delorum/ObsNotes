@@ -559,7 +559,10 @@ public final class MainActivity extends AppCompatActivity {
             if (!busy) {
               try {
                 if (editor.parts != null) editor.parts.makeRoot(editor.parts.selected);
-                else editor.text = Events.root(editor.text);
+                else {
+                  editor.restoreRootMetadata();
+                  editor.text = Events.root(editor.text);
+                }
                 recovery.save(editor, vault);
                 showEditor();
               } catch (IllegalArgumentException e) {
@@ -569,7 +572,23 @@ public final class MainActivity extends AppCompatActivity {
           }
 
           public void link() {
-            pickRoot();
+            pickRoot(null);
+          }
+
+          public void editLink(String key) {
+            pickRoot(key);
+          }
+
+          public void deleteRoot() {
+            if (busy) return;
+            try {
+              if (editor.parts != null) editor.parts.deleteRoot(editor.parts.selected);
+              else editor.deleteRootMetadata();
+              recovery.save(editor, vault);
+              showEditor();
+            } catch (IllegalArgumentException error) {
+              ui.error(error.getMessage());
+            }
           }
 
           public void related() {
@@ -772,29 +791,56 @@ public final class MainActivity extends AppCompatActivity {
     return index.roots(editor.sourcePath, current, editor.fresh ? -1 : editor.start);
   }
 
-  private void pickRoot() {
+  private record RootSelection(Events.Root root, String snapshot) {}
+
+  private void pickRoot(String replacing) {
     if (busy) return;
+    EditorState form = editor.activePart();
+    int part = editor.parts == null ? -1 : editor.parts.selected;
     work(
         this::roots,
         list ->
             SearchPicker.show(
                 ui,
-                "Связать с блоком",
+                replacing == null ? "Добавить связь с корнем" : "Изменить связь",
                 list,
-                r -> (r.id().isEmpty() ? "Создать корневой · " : "") + r.label(),
+                root -> (root.id().isEmpty() ? "Создать корневой · " : "") + root.label(),
                 false,
-                selected -> {
-                  try {
-                    if (editor.parts != null)
-                      editor.parts.attachExternal(editor.parts.selected, selected.get(0));
-                    else editor.attach(selected.get(0));
-                  } catch (IllegalArgumentException e) {
-                    ui.error(e.getMessage());
-                    return;
-                  }
-                  recovery.save(editor, vault);
-                  showEditor();
-                }));
+                selected ->
+                    work(
+                        () -> {
+                          Events.Root root = selected.get(0);
+                          String snapshot = index.read(storage, root.path()).text;
+                          if (root.path().equals(editor.sourcePath)
+                              && !snapshot.equals(editor.sourceSnapshot))
+                            throw new VaultRepository.Conflict(root.path());
+                          if (new Markdown(snapshot)
+                              .blocks.stream()
+                                  .noneMatch(
+                                      block ->
+                                          block.start() == root.block().start()
+                                              && block.text().equals(root.block().text())))
+                            throw new VaultRepository.Conflict(root.path());
+                          return new RootSelection(root, snapshot);
+                        },
+                        choice -> {
+                          try {
+                            if (editor.parts != null)
+                              editor.parts.addExternal(
+                                  part, choice.root(), choice.snapshot(), replacing);
+                            else
+                              form.addRootLink(
+                                  choice.root(),
+                                  choice.snapshot(),
+                                  replacing == null
+                                      ? null
+                                      : Integer.parseInt(replacing.substring(4)));
+                            recovery.save(editor, vault);
+                            showEditor();
+                          } catch (IllegalArgumentException error) {
+                            ui.error(error.getMessage());
+                          }
+                        })));
   }
 
   private void cancelRelations() {

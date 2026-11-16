@@ -37,6 +37,10 @@ public final class EditorScreen {
 
     void link();
 
+    void editLink(String key);
+
+    void deleteRoot();
+
     void related();
 
     void weatherLocation();
@@ -323,17 +327,28 @@ public final class EditorScreen {
           });
       group.addView(chip);
     }
-    String root = state.rootLinkLabel();
-    if (rootChip && !root.isEmpty()) {
-      Chip chip = chip(ui, "К корню: " + root, Ui.ACCENT);
-      chip.setOnClickListener(v -> actions.link());
-      chip.setOnCloseIconClickListener(
-          v -> {
-            state.removeRootLink();
-            actions.changed();
-            metadata(ui, state, catalog, group, actions, edits, colorOffset, rootChip);
-          });
-      group.addView(chip);
+    if (rootChip) {
+      var refs = state.parentLinks();
+      for (int i = 0; i < refs.size(); i++) {
+        int index = i;
+        Chip chip = chip(ui, "К корню: " + refs.get(i).label(), Ui.ACCENT);
+        chip.setContentDescription("Связь " + (i + 1));
+        chip.setOnClickListener(v -> actions.editLink("raw:" + index));
+        chip.setOnCloseIconClickListener(
+            v -> {
+              state.removeRootLink(index);
+              actions.changed();
+              metadata(ui, state, catalog, group, actions, edits, colorOffset, true);
+            });
+        group.addView(chip);
+      }
+      if (!Events.rootId(state.text).isEmpty()) {
+        Chip root = chip(ui, "Корень", Ui.MUTED);
+        root.setOnClickListener(v -> actions.related());
+        root.setCloseIconContentDescription("Удалить корень");
+        root.setOnCloseIconClickListener(v -> actions.deleteRoot());
+        group.addView(root);
+      }
     }
     group.setVisibility(
         group.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);

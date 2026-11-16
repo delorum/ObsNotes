@@ -26,6 +26,10 @@ public final class EditorState {
   public String initialRevision = "";
   public String partId = UUID.randomUUID().toString();
   public EditorParts parts;
+  public final Set<Events.Parent> removedRoots = new LinkedHashSet<>();
+  public final List<EventLink.RootEdit> rootEdits = new ArrayList<>();
+  public String removedRootBefore = "", removedRootAfter = "";
+  public boolean deferRootCleanup;
 
   public void enableParts(Markdown template) {
     if (parts == null && !weatherForm && !taskAppend && !editFields) parts = new EditorParts(this);
@@ -33,6 +37,7 @@ public final class EditorState {
       parts.template = template;
       parts.sync();
       parts.migrateLegacyLinks();
+      parts.importLinks();
     }
   }
 
@@ -44,6 +49,10 @@ public final class EditorState {
   public EditorState copy() {
     EditorState s = new EditorState();
     s.partId = partId;
+    s.removedRoots.addAll(removedRoots);
+    s.rootEdits.addAll(rootEdits);
+    s.removedRootBefore = removedRootBefore;
+    s.removedRootAfter = removedRootAfter;
     s.sourcePath = sourcePath;
     s.original = original;
     s.text = text;
@@ -80,6 +89,9 @@ public final class EditorState {
   void clearEventMetadata() {
     text = parts().body;
     rootPath = rootOriginal = rootReplacement = rootSnapshot = "";
+    rootEdits.clear();
+    removedRoots.clear();
+    removedRootBefore = removedRootAfter = "";
   }
 
   private static EditorState at(String path, Markdown source, String heading) {
@@ -159,8 +171,13 @@ public final class EditorState {
   }
 
   public boolean emptyNote() {
-    if (parts != null) return parts.value.isBlank();
-    return TaggedText.parse(parts().body).clean.isBlank();
+    if (parts != null)
+      return parts.value.isBlank()
+          && !(!fresh
+              && Events.prefix(sourcePath, original).body().isBlank()
+              && parts.parts.stream()
+                  .anyMatch(part -> !parts.references(parts.parts.indexOf(part)).isEmpty()));
+    return TaggedText.parse(parts().body).clean.isBlank() && !parentOnly();
   }
 
   public static EditorState weather(String path, Markdown source) {
@@ -251,7 +268,7 @@ public final class EditorState {
 
   private Parts parts() {
     String value = text.replace("\r\n", "\n");
-    int at = value.indexOf("\n> [!info]- Дополнения к событию");
+    int at = Events.rootId(value).isEmpty() ? -1 : Events.rootCalloutStart(value);
     String callout = at < 0 ? "" : value.substring(at),
         body = at < 0 ? value : value.substring(0, at);
     Matcher anchor = Pattern.compile("(?:^|[ \t]+)\\^([A-Za-z0-9_-]+)[ \t]*$").matcher(body);
@@ -260,13 +277,10 @@ public final class EditorState {
       id = anchor.group(1);
       body = body.substring(0, anchor.start());
     }
-    Matcher link = Pattern.compile("^\\[\\[[^\\n]*#\\^[^\\n]*]]\\n").matcher(body);
-    String prefix = "";
-    if (link.find()) {
-      prefix = link.group();
-      body = body.substring(link.end());
-    }
-    return new Parts(prefix, body, id, callout);
+    var prefix = Events.prefix(sourcePath, body);
+    String prefixRaw = prefix.raw();
+    body = prefix.body();
+    return new Parts(prefixRaw, body, id, callout);
   }
 
   private String editableBody(Parts p) {
@@ -334,26 +348,108 @@ public final class EditorState {
     text = joinEditable(parts, TaggedText.parse(editableBody(parts)).remove(index).render());
   }
 
+  public List<Events.Leading> parentLinks() {
+    return Events.prefix(sourcePath, text).links();
+  }
+
   public String rootLinkLabel() {
-    String link = parts().link;
-    if (link.isEmpty()) return "";
-    int alias = link.indexOf('|');
-    return alias < 0 ? "Корневой блок" : link.substring(alias + 1, link.lastIndexOf("]]"));
+    return parentLinks().isEmpty() ? "" : parentLinks().get(0).label();
+  }
+
+  public List<EventLink.RootEdit> pendingRoots() {
+    List<EventLink.RootEdit> edits = new ArrayList<>(rootEdits);
+    if (!rootPath.isEmpty())
+      edits.add(new EventLink.RootEdit(rootPath, rootOriginal, rootReplacement, rootSnapshot));
+    return edits;
+  }
+
+  public void removeRootLink(int index) {
+    List<String> links = new ArrayList<>(parentLinks().stream().map(Events.Leading::raw).toList());
+    links.remove(index);
+    text = Events.withLinks(text, links);
+    rootEdits.removeIf(
+        edit -> !Events.references(text, sourcePath, edit.path(), Events.id(edit.replacement())));
+    if (!rootPath.isEmpty()
+        && !Events.references(text, sourcePath, rootPath, Events.id(rootReplacement)))
+      rootPath = rootOriginal = rootReplacement = rootSnapshot = "";
   }
 
   public void removeRootLink() {
-    Parts p = parts();
-    text = new Parts("", p.body, p.anchor, p.callout).join(p.body);
-    rootPath = "";
-    rootOriginal = "";
-    rootReplacement = "";
-    rootSnapshot = "";
+    text = Events.withLinks(text, List.of());
+    rootEdits.clear();
+    rootPath = rootOriginal = rootReplacement = rootSnapshot = "";
+  }
+
+  public void addRootLink(Events.Root root, String snapshot, Integer replacing) {
+    String replacement = root.id().isEmpty() ? Events.root(root.block().text()) : "";
+    Events.Root resolved =
+        replacement.isEmpty()
+            ? root
+            : new Events.Root(root.path(), root.block(), Events.id(replacement));
+    if (resolved.path().equals(sourcePath) && resolved.id().equals(Events.id(text)))
+      throw new IllegalArgumentException("Нельзя связать блок с самим собой");
+    var existing = parentLinks();
+    List<String> links = new ArrayList<>(existing.stream().map(Events.Leading::raw).toList());
+    for (int i = 0; i < existing.size(); i++)
+      if ((replacing == null || i != replacing)
+          && existing.get(i).parent().equals(new Events.Parent(resolved.path(), resolved.id()))) {
+        if (replacing == null) return;
+        throw new IllegalArgumentException("Такая связь уже есть");
+      }
+    if (replacing == null) links.add(Events.format(resolved));
+    else links.set(replacing, Events.format(resolved));
+    text = Events.withLinks(text, links);
+    if (!replacement.isEmpty())
+      rootEdits.add(
+          new EventLink.RootEdit(root.path(), root.block().text(), replacement, snapshot));
+    rootEdits.removeIf(
+        edit -> !Events.references(text, sourcePath, edit.path(), Events.id(edit.replacement())));
+  }
+
+  public void deleteRootMetadata() {
+    String id = Events.rootId(text);
+    if (id.isEmpty()) return;
+    long matches =
+        new Markdown(sourceSnapshot)
+            .blocks.stream().filter(block -> Events.id(block.text()).equals(id)).count();
+    if (matches > 1) throw new IllegalArgumentException("Якорь корня неоднозначен");
+    String before = text;
+    boolean preserve = Events.id(original).equals(id) && Events.rootId(original).isEmpty();
+    String after = Events.withoutRoot(text, !preserve);
+    text = after;
+    removedRootBefore = before;
+    removedRootAfter = after;
+    if (new Markdown(sourceSnapshot)
+        .blocks.stream().anyMatch(block -> Events.rootId(block.text()).equals(id)))
+      removedRoots.add(new Events.Parent(sourcePath, id));
+  }
+
+  public void restoreRootMetadata() {
+    if (removedRootBefore.isEmpty()) return;
+    String id = Events.rootId(removedRootBefore);
+    var current = Events.prefix(sourcePath, text);
+    String oldPlain = Events.prefix(sourcePath, removedRootAfter).body();
+    if (current.body().equals(oldPlain))
+      text = current.raw() + Events.prefix(sourcePath, removedRootBefore).body();
+    else if (!id.isEmpty())
+      text = current.raw() + Events.root(current.body().stripTrailing() + " ^" + id);
+    if (!id.isEmpty()) removedRoots.remove(new Events.Parent(sourcePath, id));
+    removedRootBefore = removedRootAfter = "";
+  }
+
+  private boolean parentOnly() {
+    return !fresh
+        && Events.prefix(sourcePath, original).body().isBlank()
+        && !parentLinks().isEmpty();
   }
 
   public String savedText() {
     Parts parts = parts();
     TaggedText tags = TaggedText.parse(parts.body);
-    if (tags.clean.isBlank()) throw new IllegalArgumentException("Введите текст");
+    if (tags.clean.isBlank()) {
+      if (parentOnly()) return parts.link.stripTrailing();
+      throw new IllegalArgumentException("Введите текст");
+    }
     return parts.join(tags.render().stripTrailing());
   }
 

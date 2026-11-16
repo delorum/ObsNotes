@@ -248,4 +248,29 @@ public class RelationSearchTest {
     assertEquals(1, updates.get(updates.size() - 1).items().size());
     assertEquals(List.of(PAST), storage.reads);
   }
+
+  @Test
+  public void multipleParentsReadEachExactFileOnceAndFindSecondaryReferences() throws IOException {
+    Storage storage = new Storage();
+    storage.files.put(PAST, doc(ROOT + "\n\n" + Events.root("Second ^second")));
+    storage.files.put(OLDER, doc(Events.root("Third ^third")));
+    String text =
+        "[[2026-11-14-сб#^event-root|One]]\n"
+            + "[[2026-11-14-сб#^second|Two]]\n[[2026-11-13-пт#^third|Three]]\nChild";
+    var updates = run(storage, text, doc(text));
+    var last = updates.get(updates.size() - 1);
+    assertEquals(List.of(PAST, OLDER), storage.reads);
+    assertEquals(0, storage.enumerations);
+    assertEquals(3, last.items().size());
+    assertTrue(last.complete());
+  }
+
+  @Test
+  public void rootFindsChildWhenItsLinkIsSecond() throws IOException {
+    Storage storage = new Storage();
+    storage.enumerationAllowed = true;
+    storage.files.put(PAST, doc("[[#^other|Other]]\n" + link(TODAY, "event-root")));
+    var updates = run(storage, ROOT, doc(ROOT));
+    assertEquals(1, updates.get(updates.size() - 1).items().size());
+  }
 }

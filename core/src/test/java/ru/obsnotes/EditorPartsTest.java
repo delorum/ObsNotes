@@ -498,6 +498,7 @@ public class EditorPartsTest {
     s.parts.linkTo(2, 0);
     var m = new Markdown(saved(s));
     assertEquals(1, m.blocks.stream().filter(b -> !Events.rootId(b.text()).isEmpty()).count());
+    s.parts.removeReference(1, s.parts.references(1).get(0).key());
     s.parts.makeRoot(1);
     s.parts.linkTo(2, 1);
     s.parts.independent(0);

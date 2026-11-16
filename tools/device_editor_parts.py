@@ -58,7 +58,7 @@ def tag_line(part):
 
 def parent(child, parent):
     hide_ime()
-    d.tap(d.find(desc=f'Связь части {child}'))
+    d.tap(d.find(desc=f'Связь части {child}, 1'))
     label = f'К части {parent} · ' + ('FirstPart', 'SecondPart', 'ThirdPart')[parent-1]
     expected_child = state()['items'][child-1]['partId']
     expected_parent = state()['items'][parent-1]['partId']
@@ -181,7 +181,8 @@ class EditorPartsTest(unittest.TestCase):
         self.assertEqual(items[1]['partId'], edges[items[2]['partId']])
         hide_ime()
         self.assertFalse(d.nodes(d.tree(),text='Связать части'))
-        self.assertIsNotNone(d.find(text='К части 1 · Корень',down=False))
+        self.assertIsNotNone(d.find(desc='Корень части 2',down=False))
+        self.assertIsNotNone(d.find(desc='Связь части 2, 1',down=False))
         self.assertIsNotNone(d.find(text='К части 2'))
         hide_ime()
         d.tap(d.find(desc='День для всех частей'))

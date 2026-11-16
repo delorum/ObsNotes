@@ -7,17 +7,27 @@ import java.util.*;
 public final class EditorParts {
   public record Part(int start, int end, EditorState form) {}
 
+  public final EditorState owner;
   public final List<Part> parts = new ArrayList<>();
   public String value, baseline, error = "";
   public Markdown template = new Markdown("");
   public boolean linked; // Compatibility with earlier recovery snapshots and star-link toggle.
   public final PartLinks links = new PartLinks();
   public int selected;
+  public boolean imported;
+
+  public record Incoming(String child, int position, EventLink link) {}
+
+  public record DeletedRoot(String part, List<Incoming> incoming) {}
+
+  public final List<DeletedRoot> deletedRoots = new ArrayList<>();
 
   public EditorParts(EditorState owner) {
+    this.owner = owner;
     value = baseline = owner.editableText();
     parts.add(new Part(0, value.length(), owner.copy()));
     edit(value);
+    importLinks();
   }
 
   public EditorState selected() {
@@ -193,42 +203,182 @@ public final class EditorParts {
   private void configureLinks() {
     if (links.configured) return;
     PartLinks current = effectiveLinks();
-    links.parents.putAll(current.parents);
-    links.roots.addAll(current.roots);
+    links.assign(current);
     links.configured = true;
   }
 
-  public void linkTo(int child, int parent) {
-    EditorState childForm = parts.get(child).form(), parentForm = parts.get(parent).form();
-    if (childForm.kind != Markdown.Kind.SECTION || parentForm.kind != Markdown.Kind.SECTION)
+  public void importLinks() {
+    if (imported) return;
+    for (Part part : parts) {
+      var raw = part.form().parentLinks();
+      if (raw.isEmpty()) continue;
+      configureLinks();
+      List<EventLink> refs = new ArrayList<>();
+      for (var link : raw) {
+        var edit =
+            part.form().pendingRoots().stream()
+                .filter(
+                    e ->
+                        e.path().equals(link.parent().path())
+                            && Events.id(e.replacement()).equals(link.parent().id()))
+                .findFirst()
+                .orElse(null);
+        refs.add(EventLink.external(link, edit));
+      }
+      part.form().rootPath =
+          part.form().rootOriginal = part.form().rootReplacement = part.form().rootSnapshot = "";
+      part.form().rootEdits.clear();
+      refs.addAll(links.refs(part.form().partId));
+      links.set(part.form().partId, refs);
+    }
+    imported = true;
+  }
+
+  private void syncRawLinks() {
+    for (Part part : parts) {
+      List<String> raw =
+          effectiveLinks().refs(part.form().partId).stream()
+              .filter(ref -> !ref.local())
+              .map(EventLink::raw)
+              .toList();
+      if (!part.form().parentLinks().stream().map(Events.Leading::raw).toList().equals(raw))
+        part.form().text = Events.withLinks(part.form().text, raw);
+    }
+  }
+
+  public List<EventLink> references(int index) {
+    return effectiveLinks().refs(parts.get(index).form().partId);
+  }
+
+  public boolean isRoot(int index) {
+    return !Events.rootId(parts.get(index).form().text).isEmpty()
+        || effectiveLinks().rootIds().contains(parts.get(index).form().partId);
+  }
+
+  public String referenceLabel(EventLink ref) {
+    if (!ref.local()) return "К корню: " + ref.label();
+    for (int i = 0; i < parts.size(); i++)
+      if (parts.get(i).form().partId.equals(ref.part())) return "К части " + (i + 1);
+    return "Связь";
+  }
+
+  public void addInternal(int child, int parent, String replacing) {
+    EditorState a = parts.get(child).form(), b = parts.get(parent).form();
+    if (a.kind != Markdown.Kind.SECTION || b.kind != Markdown.Kind.SECTION)
       throw new IllegalArgumentException(
           "Связи доступны для разделов, без задач и Dataview-ключей");
-    PartLinks candidate = effectiveLinks();
-    candidate.parent(childForm.partId, parentForm.partId);
-    if (candidate != links) {
-      links.parents.clear();
-      links.parents.putAll(candidate.parents);
-      links.roots.clear();
-      links.roots.addAll(candidate.roots);
-      links.configured = true;
+    PartLinks candidate = effectiveLinks().copy();
+    if (replacing == null) candidate.add(a.partId, EventLink.local(b.partId));
+    else candidate.replace(a.partId, replacing, EventLink.local(b.partId));
+    links.assign(candidate);
+    syncRawLinks();
+  }
+
+  public void addExternal(int index, Events.Root root, String snapshot, String replacing) {
+    EditorState form = parts.get(index).form();
+    String replacement = "";
+    EventLink.RootEdit edit = null;
+    if (root.id().isEmpty()) {
+      for (Part part : parts)
+        for (var ref : references(parts.indexOf(part)))
+          if (ref.edit() != null
+              && ref.edit().path().equals(root.path())
+              && ref.edit().original().equals(root.block().text())) edit = ref.edit();
+      if (edit == null) {
+        replacement = Events.root(root.block().text());
+        edit = new EventLink.RootEdit(root.path(), root.block().text(), replacement, snapshot);
+      }
+      root = new Events.Root(root.path(), root.block(), Events.id(edit.replacement()));
     }
-    childForm.removeRootLink();
+    if (root.path().equals(form.sourcePath) && root.id().equals(Events.id(form.text)))
+      throw new IllegalArgumentException("Нельзя связать блок с самим собой");
+    var raw = Events.prefix(root.path(), Events.format(root)).links().get(0);
+    EventLink ref = EventLink.external(raw, edit);
+    PartLinks candidate = effectiveLinks().copy();
+    if (replacing == null) candidate.add(form.partId, ref);
+    else candidate.replace(form.partId, replacing, ref);
+    links.assign(candidate);
+    syncRawLinks();
+  }
+
+  public void removeReference(int index, String key) {
+    configureLinks();
+    links.remove(parts.get(index).form().partId, key);
+    syncRawLinks();
+  }
+
+  public void linkTo(int child, int parent) {
+    EditorState form = parts.get(child).form(), target = parts.get(parent).form();
+    if (form.kind != Markdown.Kind.SECTION || target.kind != Markdown.Kind.SECTION)
+      throw new IllegalArgumentException(
+          "Связи доступны для разделов, без задач и Dataview-ключей");
+    PartLinks candidate = effectiveLinks().copy();
+    candidate.parent(form.partId, target.partId);
+    links.assign(candidate);
+    form.removeRootLink();
   }
 
   public void makeRoot(int index) {
     EditorState form = parts.get(index).form();
     if (form.kind != Markdown.Kind.SECTION)
       throw new IllegalArgumentException("Корень должен находиться в разделе");
-    configureLinks();
-    links.root(form.partId);
-    form.removeRootLink();
+    PartLinks candidate = effectiveLinks().copy();
+    candidate.markRoot(form.partId);
+    var removed =
+        deletedRoots.stream()
+            .filter(old -> old.part().equals(form.partId))
+            .findFirst()
+            .orElse(null);
+    if (removed != null)
+      for (var incoming : removed.incoming()) {
+        if (parts.stream().noneMatch(part -> part.form().partId.equals(incoming.child()))) continue;
+        List<EventLink> refs = new ArrayList<>(candidate.refs(incoming.child()));
+        if (refs.stream().noneMatch(ref -> ref.identity().equals(incoming.link().identity())))
+          refs.add(Math.min(incoming.position(), refs.size()), incoming.link());
+        candidate.set(incoming.child(), refs);
+      }
+    candidate.checkCycles();
+    String id = Events.rootId(form.removedRootBefore);
+    form.restoreRootMetadata();
+    links.assign(candidate);
+    deletedRoots.removeIf(old -> old.part().equals(form.partId));
+    syncRawLinks();
+    if (!id.isEmpty()) owner.removedRoots.remove(new Events.Parent(form.sourcePath, id));
+  }
+
+  public void deleteRoot(int index) {
+    EditorState form = parts.get(index).form();
+    String id = Events.rootId(form.text);
+    PartLinks candidate = effectiveLinks().copy();
+    List<Incoming> removed = new ArrayList<>();
+    for (String child : candidate.children()) {
+      var refs = candidate.refs(child);
+      List<EventLink> keep = new ArrayList<>();
+      for (int i = 0; i < refs.size(); i++) {
+        var ref = refs.get(i);
+        if (ref.local()
+            ? ref.part().equals(form.partId)
+            : !id.isEmpty() && ref.path().equals(form.sourcePath) && ref.id().equals(id))
+          removed.add(new Incoming(child, i, ref));
+        else keep.add(ref);
+      }
+      candidate.set(child, keep);
+    }
+    candidate.roots.remove(form.partId);
+    candidate.configured = true;
+    form.deleteRootMetadata();
+    links.assign(candidate);
+    owner.removedRoots.addAll(form.removedRoots);
+    syncRawLinks();
+    deletedRoots.removeIf(old -> old.part().equals(form.partId));
+    deletedRoots.add(new DeletedRoot(form.partId, List.copyOf(removed)));
   }
 
   public void attachExternal(int index, Events.Root root) {
     EditorState form = parts.get(index).form();
-    form.attach(root);
     configureLinks();
     links.independent(form.partId);
+    addExternal(index, root, form.sourceSnapshot, null);
   }
 
   public void independent(int index) {
@@ -236,6 +386,7 @@ public final class EditorParts {
     EditorState form = parts.get(index).form();
     links.independent(form.partId);
     form.removeRootLink();
+    syncRawLinks();
   }
 
   public boolean linksEnabled() {
@@ -254,22 +405,18 @@ public final class EditorParts {
     if (enabled) for (int i = 1; i < parts.size(); i++) parts.get(i).form().removeRootLink();
     links.configured = false;
     links.parents.clear();
+    links.edges.clear();
     links.roots.clear();
+    imported = false;
   }
 
   public String relationLabel(int index) {
-    String id = parts.get(index).form().partId;
-    PartLinks graph = effectiveLinks();
-    String parent = graph.parents.get(id);
-    boolean root =
-        graph.rootIds().contains(id) || !Events.rootId(parts.get(index).form().text).isEmpty();
-    if (parent != null) {
-      for (int i = 0; i < parts.size(); i++)
-        if (parts.get(i).form().partId.equals(parent))
-          return "К части " + (i + 1) + (root ? " · Корень" : "");
+    var refs = references(index);
+    boolean root = isRoot(index);
+    if (!refs.isEmpty()) {
+      var ref = refs.get(0);
+      return referenceLabel(ref) + (root ? " · Корень" : "");
     }
-    String external = parts.get(index).form().rootLinkLabel();
-    if (!external.isEmpty()) return "К корню: " + external + (root ? " · Корень" : "");
     return root ? "Корень" : "Связь";
   }
 
@@ -293,11 +440,24 @@ public final class EditorParts {
             "Связи доступны для разделов, без задач и Dataview-ключей");
   }
 
+  public List<EventLink.RootEdit> pendingRootEdits() {
+    List<EventLink.RootEdit> edits = new ArrayList<>();
+    for (Part part : parts)
+      for (var ref : effectiveLinks().refs(part.form().partId))
+        if (ref.edit() != null) edits.add(ref.edit());
+    return edits;
+  }
+
   private List<EditorState> savedForms() {
-    List<EditorState> forms = parts.stream().map(p -> p.form().copy()).toList();
+    List<EditorState> forms = parts.stream().map(part -> part.form().copy()).toList();
     PartLinks graph = effectiveLinks();
     Map<String, Events.Root> roots = new HashMap<>();
-    for (EditorState form : forms)
+    for (EditorState form : forms) {
+      form.text = Events.withLinks(form.text, List.of());
+      form.rootPath = "";
+      form.rootEdits.clear();
+      form.removedRoots.addAll(owner.removedRoots);
+      form.deferRootCleanup = true;
       if (graph.rootIds().contains(form.partId)) {
         form.text = Events.root(form.text);
         var doc = new Markdown(form.heading + "\n" + form.text + "\n");
@@ -305,9 +465,23 @@ public final class EditorParts {
             form.partId,
             new Events.Root(form.destinationPath, doc.blocks.get(0), Events.rootId(form.text)));
       }
+    }
     for (EditorState form : forms) {
-      String parent = graph.parents.get(form.partId);
-      if (parent != null) form.text = Events.link(form.text, roots.get(parent));
+      List<String> raw = new ArrayList<>();
+      for (EventLink ref : graph.refs(form.partId))
+        raw.add(
+            ref.local()
+                ? Events.format(roots.get(ref.part()))
+                : ref.raw().isEmpty()
+                    ? "[["
+                        + ref.path().replaceFirst("\\.md$", "")
+                        + "#^"
+                        + ref.id()
+                        + "|"
+                        + ref.label()
+                        + "]]"
+                    : ref.raw());
+      form.text = Events.withLinks(form.text, raw);
     }
     return forms;
   }
@@ -327,7 +501,9 @@ public final class EditorParts {
     if (parts.size() == 1 && !(internalEvents && !owner.sourcePath.equals(owner.destinationPath))) {
       EditorState form = forms.get(0);
       form.edit(value);
-      return VaultRepository.plan(form, source, destination, template, date, now, rules);
+      return VaultRepository.addRoots(
+          VaultRepository.plan(form, source, destination, template, date, now, rules),
+          pendingRootEdits());
     }
     if (!owner.fresh) owner.originalBlock(source);
     LinkedHashMap<String, String> before = new LinkedHashMap<>(), after = new LinkedHashMap<>();
@@ -349,12 +525,14 @@ public final class EditorParts {
                   owner.sourcePath,
                   source.text,
                   source.replace(owner.originalBlock(source), joined).text));
-      for (EditorState form : forms) changes = VaultRepository.addRoot(changes, form);
-      return changes;
+      return VaultRepository.addRoots(changes, pendingRootEdits());
     }
     boolean relocatedGroup = internalEvents && !owner.sourcePath.equals(owner.destinationPath);
     if (relocatedGroup && !owner.fresh) {
-      if (!Events.id(owner.original).isEmpty() || owner.original.contains("[[#^"))
+      if ((!Events.id(owner.original).isEmpty()
+              && !owner.removedRoots.contains(
+                  new Events.Parent(owner.sourcePath, Events.id(owner.original))))
+          || forms.stream().anyMatch(f -> f.text.contains("[[#^")))
         throw new IllegalArgumentException(
             "Корневой блок нельзя переносить между днями: ссылки должны сохранить адрес.");
       after.put(owner.sourcePath, source.replace(owner.originalBlock(source), "").text);
@@ -362,7 +540,10 @@ public final class EditorParts {
     boolean firstPart = true;
     for (EditorState form : forms) {
       if (!owner.sourcePath.equals(owner.destinationPath)
-          && (!Events.id(owner.original).isEmpty() || owner.original.contains("[[#^")))
+          && ((!Events.id(owner.original).isEmpty()
+                  && !owner.removedRoots.contains(
+                      new Events.Parent(owner.sourcePath, Events.id(owner.original))))
+              || forms.stream().anyMatch(f -> f.text.contains("[[#^"))))
         throw new IllegalArgumentException(
             "Корневой блок нельзя переносить между днями: ссылки должны сохранить адрес.");
       form.fresh = firstPart && !relocatedGroup ? owner.fresh : true;
@@ -407,7 +588,7 @@ public final class EditorParts {
       String updated = after.get(path);
       result.add(new VaultRepository.Change(path, before.get(path), updated));
     }
-    for (var part : parts) result = new ArrayList<>(VaultRepository.addRoot(result, part.form()));
+    result = new ArrayList<>(VaultRepository.addRoots(result, pendingRootEdits()));
     return result.stream()
         .map(
             c ->

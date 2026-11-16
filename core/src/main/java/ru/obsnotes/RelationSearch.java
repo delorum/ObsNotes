@@ -46,13 +46,13 @@ public final class RelationSearch {
             updates.accept(
                 new Snapshot(List.copyOf(found.values()), checked[0], unreadable[0], complete));
         };
-    var parent = Events.parent(source, text);
+    var parent = Events.parents(source, text);
     collect(found, source, current, source, rootId, parent);
     visited.add(source);
     publish.accept(false);
-    if (parent.isPresent() && !parent.get().path().equals(source)) {
-      String path = parent.get().path();
-      visited.add(path);
+    for (var relation : parent) {
+      String path = relation.path();
+      if (!visited.add(path)) continue;
       if (cancelled.getAsBoolean()) return;
       try {
         String raw = storage.read(path);
@@ -97,13 +97,15 @@ public final class RelationSearch {
       Markdown doc,
       String source,
       String rootId,
-      Optional<Events.Parent> parent) {
+      List<Events.Parent> parent) {
     for (var block : doc.blocks) {
       boolean child = !rootId.isEmpty() && Events.references(block.text(), path, source, rootId);
       boolean root =
-          parent.isPresent()
-              && parent.get().path().equals(path)
-              && parent.get().id().equals(Events.id(block.text()));
+          parent.stream()
+              .anyMatch(
+                  relation ->
+                      relation.path().equals(path)
+                          && relation.id().equals(Events.id(block.text())));
       if (child || root) found.putIfAbsent(path + ":" + block.start(), new Related(path, block));
     }
   }

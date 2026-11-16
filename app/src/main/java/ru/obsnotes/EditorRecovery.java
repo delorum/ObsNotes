@@ -38,6 +38,19 @@ public final class EditorRecovery {
     JSONObject j = new JSONObject();
 
     j.put("initialRevision", s.initialRevision);
+    j.put("removedRootBefore", s.removedRootBefore);
+    j.put("removedRootAfter", s.removedRootAfter);
+    JSONArray removed = new JSONArray();
+    for (var root : s.removedRoots) {
+      JSONObject item = new JSONObject();
+      item.put("path", root.path());
+      item.put("id", root.id());
+      removed.put(item);
+    }
+    j.put("removedRoots", removed);
+    JSONArray edits = new JSONArray();
+    for (var edit : s.rootEdits) edits.put(encodeEdit(edit));
+    j.put("rootEdits", edits);
     j.put("partId", s.partId);
     j.put("sourcePath", s.sourcePath);
     j.put("destinationPath", s.destinationPath);
@@ -86,7 +99,31 @@ public final class EditorRecovery {
       links.put("configured", s.parts.links.configured);
       links.put("parents", new JSONObject(s.parts.links.parents));
       links.put("roots", new JSONArray(s.parts.links.roots));
+      JSONObject edges = new JSONObject();
+      for (String child : s.parts.links.children()) {
+        JSONArray refs = new JSONArray();
+        for (var ref : s.parts.links.refs(child)) refs.put(encodeLink(ref));
+        edges.put(child, refs);
+      }
+      links.put("edges", edges);
       split.put("links", links);
+      split.put("linksImported", s.parts.imported);
+      JSONArray deleted = new JSONArray();
+      for (var root : s.parts.deletedRoots) {
+        JSONObject item = new JSONObject();
+        item.put("part", root.part());
+        JSONArray incoming = new JSONArray();
+        for (var ref : root.incoming()) {
+          JSONObject row = new JSONObject();
+          row.put("child", ref.child());
+          row.put("position", ref.position());
+          row.put("link", encodeLink(ref.link()));
+          incoming.put(row);
+        }
+        item.put("incoming", incoming);
+        deleted.put(item);
+      }
+      split.put("deletedRoots", deleted);
       split.put("selected", s.parts.selected);
       split.put("error", s.parts.error);
       JSONArray items = new JSONArray();
@@ -105,6 +142,17 @@ public final class EditorRecovery {
   private EditorState decode(JSONObject j) throws JSONException {
     EditorState s = new EditorState();
     s.initialRevision = j.optString("initialRevision");
+    s.removedRootBefore = j.optString("removedRootBefore");
+    s.removedRootAfter = j.optString("removedRootAfter");
+    JSONArray removed = j.optJSONArray("removedRoots");
+    if (removed != null)
+      for (int i = 0; i < removed.length(); i++) {
+        JSONObject root = removed.getJSONObject(i);
+        s.removedRoots.add(new Events.Parent(root.getString("path"), root.getString("id")));
+      }
+    JSONArray edits = j.optJSONArray("rootEdits");
+    if (edits != null)
+      for (int i = 0; i < edits.length(); i++) s.rootEdits.add(decodeEdit(edits.getJSONObject(i)));
     s.partId = j.optString("partId", s.partId);
     s.sourcePath = j.getString("sourcePath");
     s.destinationPath = j.getString("destinationPath");
@@ -151,6 +199,10 @@ public final class EditorRecovery {
     if (split != null) {
       s.parts = new EditorParts(s);
       s.parts.parts.clear();
+      s.parts.links.parents.clear();
+      s.parts.links.edges.clear();
+      s.parts.links.roots.clear();
+      s.parts.imported = split.optBoolean("linksImported");
       JSONArray items = split.getJSONArray("items");
       for (int i = 0; i < items.length(); i++) {
         JSONObject item = items.getJSONObject(i);
@@ -170,12 +222,78 @@ public final class EditorRecovery {
           String child = keys.next();
           s.parts.links.parents.put(child, parents.getString(child));
         }
+        JSONObject edges = links.optJSONObject("edges");
+        if (edges != null)
+          for (var keys = edges.keys(); keys.hasNext(); ) {
+            String child = keys.next();
+            JSONArray array = edges.getJSONArray(child);
+            java.util.List<EventLink> refs = new java.util.ArrayList<>();
+            for (int i = 0; i < array.length(); i++) refs.add(decodeLink(array.getJSONObject(i)));
+            s.parts.links.set(child, refs);
+          }
         JSONArray roots = links.getJSONArray("roots");
         for (int i = 0; i < roots.length(); i++) s.parts.links.roots.add(roots.getString(i));
       }
+      JSONArray deleted = split.optJSONArray("deletedRoots");
+      if (deleted != null)
+        for (int i = 0; i < deleted.length(); i++) {
+          JSONObject item = deleted.getJSONObject(i);
+          JSONArray rows = item.getJSONArray("incoming");
+          java.util.List<EditorParts.Incoming> incoming = new java.util.ArrayList<>();
+          for (int n = 0; n < rows.length(); n++) {
+            JSONObject row = rows.getJSONObject(n);
+            incoming.add(
+                new EditorParts.Incoming(
+                    row.getString("child"),
+                    row.getInt("position"),
+                    decodeLink(row.getJSONObject("link"))));
+          }
+          s.parts.deletedRoots.add(
+              new EditorParts.DeletedRoot(item.getString("part"), java.util.List.copyOf(incoming)));
+        }
       s.parts.selected = split.optInt("selected");
     }
     return s;
+  }
+
+  private JSONObject encodeEdit(EventLink.RootEdit edit) throws JSONException {
+    JSONObject j = new JSONObject();
+    j.put("path", edit.path());
+    j.put("original", edit.original());
+    j.put("replacement", edit.replacement());
+    j.put("snapshot", edit.snapshot());
+    return j;
+  }
+
+  private EventLink.RootEdit decodeEdit(JSONObject j) throws JSONException {
+    return new EventLink.RootEdit(
+        j.getString("path"),
+        j.getString("original"),
+        j.getString("replacement"),
+        j.getString("snapshot"));
+  }
+
+  private JSONObject encodeLink(EventLink ref) throws JSONException {
+    JSONObject j = new JSONObject();
+    j.put("key", ref.key());
+    j.put("part", ref.part());
+    j.put("path", ref.path());
+    j.put("id", ref.id());
+    j.put("label", ref.label());
+    j.put("raw", ref.raw());
+    if (ref.edit() != null) j.put("edit", encodeEdit(ref.edit()));
+    return j;
+  }
+
+  private EventLink decodeLink(JSONObject j) throws JSONException {
+    return new EventLink(
+        j.getString("key"),
+        j.getString("part"),
+        j.getString("path"),
+        j.getString("id"),
+        j.getString("label"),
+        j.getString("raw"),
+        j.has("edit") ? decodeEdit(j.getJSONObject("edit")) : null);
   }
 
   private String key(String vault) {

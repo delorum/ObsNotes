@@ -62,23 +62,45 @@ final class EditorPartsScreen {
             card.addView(chips);
             EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of(), colorOffset, false);
             colorOffset += LineMarks.of(form.editableText(), form.tags()).size();
-            Chip relation = EditorScreen.chip(ui, owner.parts.relationLabel(i), Ui.MUTED);
-            relation.setContentDescription("Связь части " + (i + 1));
-            relation.setCloseIconVisible(false);
-            relation.setChipIcon(
-                androidx.appcompat.content.res.AppCompatResources.getDrawable(
-                    ui.activity, ru.obsnotes.R.drawable.ic_link));
-            relation.setChipIconTint(android.content.res.ColorStateList.valueOf(Ui.MUTED));
-            relation.setChipIconVisible(true);
-            relation.setOnClickListener(
-                v -> {
-                  select.run();
-                  PartLinkPicker.show(ui, owner, index, scoped::link, scoped::routesChanged);
-                });
-            if (!owner.parts.relationLabel(i).equals("Связь")) {
+            var refs = owner.parts.references(index);
+            for (int n = 0; n < refs.size(); n++) {
+              var ref = refs.get(n);
+              Chip relation = EditorScreen.chip(ui, owner.parts.referenceLabel(ref), Ui.MUTED);
+              relation.setContentDescription("Связь части " + (index + 1) + ", " + (n + 1));
+              relation.setChipIcon(
+                  androidx.appcompat.content.res.AppCompatResources.getDrawable(
+                      ui.activity, ru.obsnotes.R.drawable.ic_link));
+              relation.setChipIconTint(android.content.res.ColorStateList.valueOf(Ui.MUTED));
+              relation.setChipIconVisible(true);
+              relation.setOnClickListener(
+                  v -> {
+                    select.run();
+                    PartLinkPicker.show(
+                        ui,
+                        owner,
+                        index,
+                        ref.key(),
+                        () -> scoped.editLink(ref.key()),
+                        scoped::routesChanged);
+                  });
+              relation.setCloseIconContentDescription(
+                  "Удалить связь части " + (index + 1) + ", " + (n + 1));
+              relation.setOnCloseIconClickListener(
+                  v -> {
+                    owner.parts.removeReference(index, ref.key());
+                    scoped.routesChanged();
+                  });
               chips.addView(relation);
-              chips.setVisibility(android.view.View.VISIBLE);
             }
+            if (owner.parts.isRoot(index)) {
+              Chip root = EditorScreen.chip(ui, "Корень", Ui.MUTED);
+              root.setContentDescription("Корень части " + (index + 1));
+              root.setOnClickListener(v -> scoped.related());
+              root.setCloseIconContentDescription("Удалить корень части " + (index + 1));
+              root.setOnCloseIconClickListener(v -> scoped.deleteRoot());
+              chips.addView(root);
+            }
+            if (chips.getChildCount() > 0) chips.setVisibility(android.view.View.VISIBLE);
             card.setVisibility(
                 chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
             if (form.kind == Markdown.Kind.TASK) {
@@ -175,7 +197,7 @@ final class EditorPartsScreen {
             () -> {
               selectCaret.run();
               PartLinkPicker.show(
-                  ui, owner, owner.parts.selected, actions::link, actions::routesChanged);
+                  ui, owner, owner.parts.selected, null, actions::link, actions::routesChanged);
             }));
     ui.action(
         relations,
@@ -270,6 +292,16 @@ final class EditorPartsScreen {
     public void link() {
       select.run();
       parent.link();
+    }
+
+    public void editLink(String key) {
+      select.run();
+      parent.editLink(key);
+    }
+
+    public void deleteRoot() {
+      select.run();
+      parent.deleteRoot();
     }
 
     public void related() {

@@ -76,24 +76,36 @@ public final class VaultRepository {
   }
 
   public static List<Change> addRoot(List<Change> changes, EditorState state) {
-    if (state.taskOnly() || state.rootPath.isEmpty()) return changes;
+    return state.taskOnly() ? changes : addRoots(changes, state.pendingRoots());
+  }
+
+  public static List<Change> addRoots(List<Change> changes, List<EventLink.RootEdit> edits) {
     List<Change> result = new ArrayList<>(changes);
-    int existing = -1;
-    for (int i = 0; i < result.size(); i++)
-      if (result.get(i).path.equals(state.rootPath)) existing = i;
-    String before = existing >= 0 ? result.get(existing).before : state.rootSnapshot;
-    String after = existing >= 0 ? result.get(existing).after : before;
-    Markdown current = new Markdown(after);
-    List<Markdown.Block> roots =
-        current.blocks.stream()
-            .filter(b -> b.text().equals(state.rootOriginal))
-            .collect(java.util.stream.Collectors.toList());
-    if (roots.size() != 1)
-      throw new IllegalArgumentException("Корневой блок изменился или неоднозначен");
-    after = current.replace(roots.get(0), state.rootReplacement).text;
-    Change root = new Change(state.rootPath, before, after);
-    if (existing >= 0) result.set(existing, root);
-    else result.add(0, root);
+    Map<String, EventLink.RootEdit> unique = new LinkedHashMap<>();
+    for (var edit : edits) {
+      String key = edit.path() + "\n" + edit.original();
+      var prior = unique.putIfAbsent(key, edit);
+      if (prior != null && !prior.replacement().equals(edit.replacement()))
+        throw new IllegalArgumentException("Корень выбран неоднозначно");
+    }
+    for (var edit : unique.values()) {
+      int existing = -1;
+      for (int i = 0; i < result.size(); i++)
+        if (result.get(i).path.equals(edit.path())) existing = i;
+      String before = existing >= 0 ? result.get(existing).before : edit.snapshot();
+      if (!edit.snapshot().isEmpty() && !before.equals(edit.snapshot()))
+        throw new IllegalArgumentException("Файл корня изменился извне");
+      String after = existing >= 0 ? result.get(existing).after : before;
+      Markdown current = new Markdown(after);
+      var roots =
+          current.blocks.stream().filter(block -> block.text().equals(edit.original())).toList();
+      if (roots.size() != 1)
+        throw new IllegalArgumentException("Корневой блок изменился или неоднозначен");
+      after = current.replace(roots.get(0), edit.replacement()).text;
+      Change change = new Change(edit.path(), before, after);
+      if (existing >= 0) result.set(existing, change);
+      else result.add(0, change);
+    }
     return List.copyOf(result);
   }
 
@@ -116,6 +128,27 @@ public final class VaultRepository {
       LocalDateTime now,
       CleanupRules rules) {
     if (EditorRevision.unchanged(state, template)) return List.of();
+    List<Change> changes = planContents(state, source, destination, template, date, now, rules);
+    if (state.deferRootCleanup || state.removedRoots.isEmpty()) return changes;
+    List<Change> result = new ArrayList<>();
+    for (Change change : changes)
+      result.add(
+          new Change(
+              change.path,
+              change.before,
+              Events.detach(new Markdown(change.after), change.path, state.removedRoots).text));
+    return List.copyOf(result);
+  }
+
+  private static List<Change> planContents(
+      EditorState state,
+      Markdown source,
+      Markdown destination,
+      Markdown template,
+      LocalDate date,
+      LocalDateTime now,
+      CleanupRules rules) {
+    if (EditorRevision.unchanged(state, template)) return List.of();
     if (state.parts != null)
       return state.parts.plan(state, source, destination, template, date, now, rules);
     if (state.weatherForm)
@@ -124,14 +157,20 @@ public final class VaultRepository {
     Markdown.Block block = state.fresh ? null : state.originalBlock(source);
     if (!state.taskOnly() && state.emptyNote()) {
       if (block == null) return List.of();
-      if (!Events.id(block.text()).isEmpty())
+      if (!Events.id(block.text()).isEmpty()
+          && !state.removedRoots.contains(
+              new Events.Parent(state.sourcePath, Events.id(block.text()))))
         throw new IllegalArgumentException("Блок с якорем нельзя удалить");
       return clean(
           List.of(new Change(state.sourcePath, source.text, source.replace(block, "").text)),
           rules);
     }
     String text = state.taskOnly() ? "" : state.savedText();
-    if (state.taskOnly() && block != null && !Events.id(block.text()).isEmpty())
+    if (state.taskOnly()
+        && block != null
+        && !Events.id(block.text()).isEmpty()
+        && !state.removedRoots.contains(
+            new Events.Parent(state.sourcePath, Events.id(block.text()))))
       throw new IllegalArgumentException("Блок с якорем нельзя убрать при отметке задачи");
     if (!same && (!Events.id(text).isEmpty() || text.contains("[[#^")))
       throw new IllegalArgumentException(
@@ -163,12 +202,8 @@ public final class VaultRepository {
     String payload = text;
     if (state.fresh && state.heading.equals("## Заметки") && state.kind == Markdown.Kind.SECTION) {
       String stamp = to.timestamp(now);
-      int firstLine = text.indexOf('\n');
-      // Parent wiki-links must remain the first line for Obsidian's event scripts.
-      payload =
-          firstLine >= 0 && Events.parent(state.destinationPath, text).isPresent()
-              ? text.substring(0, firstLine + 1) + stamp + text.substring(firstLine + 1)
-              : stamp + text;
+      Events.Prefix prefix = Events.prefix(state.destinationPath, text);
+      payload = prefix.raw() + stamp + prefix.body();
     }
     if (state.heading.equals("## Сделано сегодня (или отмечено сделанным сегодня)")
         && state.kind == Markdown.Kind.SECTION)

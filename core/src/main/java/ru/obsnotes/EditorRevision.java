@@ -61,27 +61,37 @@ public final class EditorRevision {
       for (String tag : tags) add(key, tag);
       add(key, fullSections.size());
       for (String section : fullSections) add(key, section);
-      boolean rootUpdate =
-          !form.rootPath.isEmpty() && !form.rootOriginal.equals(form.rootReplacement);
-      add(key, rootUpdate);
-      if (rootUpdate) {
-        add(key, form.rootPath);
-        add(key, form.rootOriginal);
-        add(key, form.rootReplacement);
+      List<EventLink.RootEdit> pending =
+          owner.parts == null
+              ? form.pendingRoots()
+              : links.refs(form.partId).stream()
+                  .map(EventLink::edit)
+                  .filter(Objects::nonNull)
+                  .distinct()
+                  .toList();
+      add(key, pending.size());
+      for (var edit : pending) {
+        add(key, edit.path());
+        add(key, edit.original());
+        add(key, edit.replacement());
       }
       add(key, Events.id(form.text));
       add(key, !Events.rootId(form.text).isEmpty() || links.rootIds().contains(form.partId));
-      String parent = links.parents.get(form.partId);
-      if (parent != null) add(key, "part:" + indices.get(parent));
-      else
-        add(
-            key,
-            Events.parent(form.sourcePath, form.text)
-                .map(p -> p.path() + "#^" + p.id())
-                .orElse(""));
+      List<EventLink> refs =
+          owner.parts == null
+              ? form.parentLinks().stream().map(link -> EventLink.external(link, null)).toList()
+              : links.refs(form.partId);
+      add(key, refs.size());
+      for (var ref : refs) {
+        add(key, ref.local() ? "part:" + indices.get(ref.part()) : ref.path() + "#^" + ref.id());
+      }
     }
+    var removed =
+        owner.removedRoots.stream().map(root -> root.path() + "#^" + root.id()).sorted().toList();
+    add(key, removed.size());
+    for (String root : removed) add(key, root);
     try {
-      return "v1:"
+      return "v2:"
           + Base64.getEncoder()
               .encodeToString(
                   MessageDigest.getInstance("SHA-256")
@@ -97,7 +107,7 @@ public final class EditorRevision {
 
   /** Migrate old recovery records from their original source, never from the current edits. */
   public static void recoverBaseline(EditorState state, Markdown template) {
-    if (!state.initialRevision.isEmpty()) return;
+    if (state.initialRevision.startsWith("v2:")) return;
     try {
       Markdown source = new Markdown(state.sourceSnapshot);
       EditorState initial;

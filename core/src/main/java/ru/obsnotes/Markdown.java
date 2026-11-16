@@ -109,10 +109,13 @@ public final class Markdown {
             generated = false;
           }
         }
-        boolean structural =
-            generated
-                || wasGenerated
-                || !inFence && !wasFence && STAMP.matcher(line.strip()).matches();
+        boolean timestamp = !inFence && !wasFence && STAMP.matcher(line.strip()).matches();
+        if (timestamp && start >= 0) {
+          Events.Prefix prefix = Events.prefix("", text.substring(start, pos));
+          // A timestamp following parent metadata belongs to that linked block.
+          timestamp = prefix.links().isEmpty() || !prefix.body().isBlank();
+        }
+        boolean structural = generated || wasGenerated || timestamp;
         boolean stop = structural || line.isBlank() && !inFence && !wasFence;
         if (stop && start >= 0) {
           bs.add(block(start, pos, s));
