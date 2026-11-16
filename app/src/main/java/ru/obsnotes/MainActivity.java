@@ -38,6 +38,10 @@ public final class MainActivity extends AppCompatActivity {
   private Markdown template = new Markdown(""), document;
   private DayContentRules contentRules = DayContentRules.EMPTY;
   private EditorState editor;
+
+  private record TaskViewport(String path, int line, int y) {}
+
+  private TaskViewport taskViewport;
   private boolean busy = false, connected = false;
   private boolean foreground = false, conflictPending = false;
   private android.app.Dialog conflictDialog;
@@ -420,6 +424,20 @@ public final class MainActivity extends AppCompatActivity {
             toggleTask(task);
           }
 
+          public void appendTask(DiaryTasks.Task task) {
+            if (busy || document == null) return;
+            cancelWeather();
+            cancelNavigation();
+            try {
+              editor = EditorState.appendTask(path, document, template, task);
+              taskViewport = new TaskViewport(path, task.start(), ui.scroll.getScrollY());
+              recovery.save(editor, vault);
+              showEditor();
+            } catch (IllegalArgumentException error) {
+              ui.error(error.getMessage());
+            }
+          }
+
           public void weather() {
             startWeather();
           }
@@ -433,7 +451,10 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void showDayKeepingPosition() {
-    int y = ui.scroll.getScrollY();
+    showDayAt(ui.scroll.getScrollY());
+  }
+
+  private void showDayAt(int y) {
     showDay();
     var scroll = ui.scroll;
     ui.afterLayout(scroll, () -> scroll.scrollTo(0, y));
@@ -452,6 +473,7 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void startEditor(Markdown.Block block, String heading) {
+    taskViewport = null;
     cancelWeather();
     cancelNavigation();
     if (document == null) return;
@@ -832,6 +854,7 @@ public final class MainActivity extends AppCompatActivity {
         result -> {
           editor = null;
           conflictPending = false;
+          taskViewport = null;
           path = result.path();
           day = LocalDate.parse(DiaryLayout.fileName(path).substring(0, 10));
           document = result.document();
@@ -845,6 +868,13 @@ public final class MainActivity extends AppCompatActivity {
     cancelNavigation();
     recovery.save(editor, vault);
     EditorState form = editor;
+    int returnY =
+        form.taskAppend
+                && taskViewport != null
+                && taskViewport.path().equals(form.destinationPath)
+                && taskViewport.line() == form.targetLine
+            ? taskViewport.y()
+            : -1;
     String selectedVault = vault;
     Markdown from = new Markdown(form.sourceSnapshot), to = new Markdown(form.destinationSnapshot);
     SafVaultStorage selectedStorage = storage;
@@ -872,7 +902,7 @@ public final class MainActivity extends AppCompatActivity {
         changes -> {
           editor = null;
           if (!changes.isEmpty()) {
-            checklistContext = null;
+            if (returnY < 0) checklistContext = null;
             var result =
                 changes.stream()
                     .filter(c -> c.path().equals(form.destinationPath))
@@ -882,7 +912,9 @@ public final class MainActivity extends AppCompatActivity {
             path = result.path();
             document = new Markdown(result.after());
           }
-          showDay();
+          taskViewport = null;
+          if (returnY >= 0) showDayAt(returnY);
+          else showDay();
           if (after != null) after.run();
         });
   }

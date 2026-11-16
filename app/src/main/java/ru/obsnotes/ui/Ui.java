@@ -236,6 +236,25 @@ public final class Ui {
     return edit;
   }
 
+  public EditText searchField(LinearLayout parent, String label, String value) {
+    LinearLayout row = row(), input = column();
+    EditText search = field(input, label, value, false, null);
+    ((LinearLayout.LayoutParams) input.getChildAt(0).getLayoutParams()).bottomMargin = 0;
+    weighted(row, input);
+    action(
+        row,
+        ru.obsnotes.R.drawable.ic_clear,
+        "Очистить поиск",
+        () -> {
+          search.setText("");
+          focusInput(search);
+        });
+    LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
+    layout.bottomMargin = dp(8);
+    parent.addView(row, layout);
+    return search;
+  }
+
   public void watch(EditText field, Consumer<String> callback) {
     field.addTextChangedListener(
         new TextWatcher() {

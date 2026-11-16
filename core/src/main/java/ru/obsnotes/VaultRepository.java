@@ -174,7 +174,10 @@ public final class VaultRepository {
             : to.insert(target, payload, date, template);
     if (same)
       return finish(
-          List.of(new Change(state.sourcePath, source.text, result.text)), state, true, rules);
+          List.of(new Change(state.sourcePath, source.text, result.text)),
+          state,
+          !state.taskAppend,
+          rules);
     return finish(
         List.of(
             new Change(state.destinationPath, destination.text, result.text),

@@ -65,7 +65,8 @@ final class DayBlockView {
               actions.toggle(task);
             };
         check.setOnClickListener(v -> toggle.run());
-        label.setOnClickListener(v -> toggle.run());
+        label.setContentDescription("Добавить текст к задаче: " + task.label());
+        label.setOnClickListener(v -> actions.appendTask(task));
         label.setOnLongClickListener(
             v -> {
               actions.edit(block);

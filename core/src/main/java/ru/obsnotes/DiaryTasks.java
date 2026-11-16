@@ -46,6 +46,10 @@ public final class DiaryTasks {
     return DONE.matcher(line).replaceAll("").stripTrailing();
   }
 
+  public static String addition(String text) {
+    return text.replace("\r\n", "\n").replace('\r', '\n').replace("\n", "; ");
+  }
+
   public static String appendBeforeAnchor(String line, String addition) {
     var anchor = ANCHOR.matcher(line);
     int at = anchor.find() ? anchor.start() : line.length();

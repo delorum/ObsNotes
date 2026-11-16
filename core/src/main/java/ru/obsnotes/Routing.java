@@ -12,6 +12,8 @@ public final class Routing {
         var m = Markdown.FIELD.matcher(target.source());
         if (m.matches()) return m.group(1);
       }
+      if (target.kind() == Markdown.Kind.TASK && DiaryTasks.isDiary(target.source()))
+        return new DiaryTasks.Task(target.line(), target.source(), false).label();
       if (target.kind() == Markdown.Kind.TASK)
         return target
             .source()
@@ -44,25 +46,37 @@ public final class Routing {
         if (!id.isEmpty()) canonical.putIfAbsent(id.toLowerCase(Locale.ROOT), choice);
       }
       choices = List.copyOf(rows);
-      Map<String, Set<String>> keys = new LinkedHashMap<>();
+      Map<String, Set<String>> termsBySection = new LinkedHashMap<>();
       for (var doc : List.of(template, destination)) {
         var fields = InlineFields.all(doc);
         for (var section : doc.sections)
           for (var field : fields)
             if (field.start() >= section.body() && field.start() < section.end())
-              keys.computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>())
+              termsBySection
+                  .computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>())
                   .add(field.key());
       }
+      for (var task : DiaryTasks.in(destination.text, 0))
+        for (var section : destination.sections)
+          if (task.start() >= section.body() && task.start() < section.end()) {
+            Set<String> terms =
+                termsBySection.computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>());
+            terms.add(task.label());
+            terms.add(task.label().split(";", 2)[0].strip());
+          }
       for (var choice : choices)
         if (choice.target().kind() == Markdown.Kind.SECTION)
           sectionLabels.put(
               choice.target().heading(),
               searchLabel(choice)
                   + "\n"
-                  + String.join("\n", keys.getOrDefault(choice.target().heading(), Set.of())));
+                  + String.join(
+                      "\n", termsBySection.getOrDefault(choice.target().heading(), Set.of())));
     }
 
-    /** Search section names, aliases and field keys, without indexing field values. */
+    /**
+     * Search names, aliases, field keys and current diary task text, without ordinary note values.
+     */
     public String sectionSearchLabel(String heading) {
       return sectionLabels.getOrDefault(heading, heading);
     }

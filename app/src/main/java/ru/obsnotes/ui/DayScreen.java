@@ -32,6 +32,8 @@ public final class DayScreen {
 
     void toggle(DiaryTasks.Task task);
 
+    void appendTask(DiaryTasks.Task task);
+
     void weather();
 
     void searchChanged(String query);
@@ -91,7 +93,7 @@ public final class DayScreen {
     }
     var outline = DayOutline.sections(document, template, rules);
     var catalog = new Routing.Catalog(document, template);
-    EditText search = ui.field(ui.body, "Поиск разделов", query, false, null);
+    EditText search = ui.searchField(ui.body, "Поиск разделов", query);
     search.setTag("section-search");
     search.setContentDescription("Поиск разделов");
     LinearLayout results = ui.column();

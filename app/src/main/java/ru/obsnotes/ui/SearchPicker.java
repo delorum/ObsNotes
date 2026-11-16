@@ -73,7 +73,7 @@ public final class SearchPicker {
           () -> apply.accept(selection.selected()));
       layout.addView(header);
     } else dialog.setTitle(title);
-    EditText search = ui.field(layout, "Поиск", "", false, null);
+    EditText search = ui.searchField(layout, "Поиск", "");
     ListView list = new ListView(ui.activity);
     list.setDivider(null);
     int height =

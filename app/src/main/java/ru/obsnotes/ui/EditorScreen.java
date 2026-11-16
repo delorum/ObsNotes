@@ -47,13 +47,15 @@ public final class EditorScreen {
     String title =
         state.weatherForm
             ? "Погода"
-            : state.fieldCount() == 1
-                ? state.fieldName(0)
-                : state.fieldCount() > 1
-                    ? "Поля"
-                    : state.kind == Markdown.Kind.FIELD
-                        ? state.routingCatalog(template).resolve(state.target()).label()
-                        : state.fresh ? "Новая заметка" : "Текстовый блок";
+            : state.taskAppend
+                ? "Дополнение к задаче"
+                : state.fieldCount() == 1
+                    ? state.fieldName(0)
+                    : state.fieldCount() > 1
+                        ? "Поля"
+                        : state.kind == Markdown.Kind.FIELD
+                            ? state.routingCatalog(template).resolve(state.target()).label()
+                            : state.fresh ? "Новая заметка" : "Текстовый блок";
     ui.page(title, actions::back);
     EditorState.InputCaret caret = state.inputCaret();
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
@@ -77,10 +79,30 @@ public final class EditorScreen {
       edits.add(
           ui.field(
               ui.body,
-              state.kind == Markdown.Kind.FIELD ? "Значение" : "Текст",
+              state.taskAppend
+                  ? "Дополнение"
+                  : state.kind == Markdown.Kind.FIELD ? "Значение" : "Текст",
               state.editableText(),
-              true,
+              !state.taskAppend,
               null));
+    if (state.taskAppend) {
+      EditText input = edits.get(0);
+      input.setFilters(
+          new android.text.InputFilter[] {
+            (source, start, end, dest, from, to) -> {
+              String value = source.subSequence(start, end).toString();
+              String single = DiaryTasks.addition(value);
+              return value.equals(single) ? null : single;
+            }
+          });
+      input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+      input.setOnEditorActionListener(
+          (v, action, event) -> {
+            if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+            actions.save();
+            return true;
+          });
+    }
     Runnable refresh =
         () -> {
           if (state.weatherForm) highlight(edits, state);
@@ -123,7 +145,7 @@ public final class EditorScreen {
         dates,
         ui.button(
             DiaryLayout.fileName(state.destinationPath).substring(0, 10), actions::destination));
-    if (state.kind == Markdown.Kind.TASK) {
+    if (state.kind == Markdown.Kind.TASK && !state.taskAppend) {
       MaterialCheckBox text = new MaterialCheckBox(ui.activity);
       text.setText("С текстом");
       text.setTextColor(Ui.INK);
@@ -169,6 +191,10 @@ public final class EditorScreen {
               .show();
         });
     ui.body.addView(tags);
+    if (state.taskAppend) {
+      ui.body.addView(hint);
+      return;
+    }
     LinearLayout relations = ui.row();
     ui.weighted(
         relations,
@@ -182,6 +208,8 @@ public final class EditorScreen {
   }
 
   private static String hint(EditorState state) {
+    if (state.taskAppend)
+      return "Дополнение сохранится при выходе, задача будет отмечена датой заметки.";
     return state.taskOnly()
         ? (state.fresh
             ? "Будет сохранена только отметка выполнения задачи."

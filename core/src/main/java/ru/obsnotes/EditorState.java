@@ -19,6 +19,7 @@ public final class EditorState {
   public boolean appendTaskText = true;
   public boolean editFields = false, routesInitialized = false, routeChosen = false;
   public boolean weatherForm = false;
+  public boolean taskAppend = false;
   public String fallbackHeading = "";
   public List<Routing.Choice> routes = List.of();
 
@@ -55,6 +56,28 @@ public final class EditorState {
   }
 
   public record InputCaret(int field, int offset) {}
+
+  public static EditorState appendTask(
+      String path, Markdown source, Markdown template, DiaryTasks.Task selected) {
+    var task =
+        DiaryTasks.in(source.text, 0).stream()
+            .filter(t -> t.start() == selected.start() && t.source().equals(selected.source()))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Задача изменилась"));
+    var section =
+        source.sections.stream()
+            .filter(s -> task.start() >= s.body() && task.start() < s.end())
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Раздел задачи не найден"));
+    EditorState state = at(path, source, section.heading());
+    state.chooseTarget(
+        new Markdown.Target(
+            task.label(), section.heading(), task.start(), task.source(), Markdown.Kind.TASK));
+    state.taskAppend = true;
+    state.routeChosen = true;
+    state.initializeRoutes(template);
+    return state;
+  }
 
   /** Cursor offsets refer to visible values, never field keys or hidden Markdown metadata. */
   public InputCaret inputCaret() {
@@ -121,7 +144,12 @@ public final class EditorState {
     kind = target.kind();
     targetLine = target.line();
     targetSource = target.source();
-    if (kind != Markdown.Kind.TASK) appendTaskText = true;
+    if (kind != Markdown.Kind.TASK) {
+      appendTaskText = true;
+      taskAppend = false;
+    } else if (!DiaryTasks.isDiary(target.source())) {
+      taskAppend = false;
+    }
   }
 
   public void chooseDay(String path, String snapshot) {
@@ -133,6 +161,7 @@ public final class EditorState {
     destinationPath = path;
     destinationSnapshot = path.equals(sourcePath) ? sourceSnapshot : snapshot;
     kind = Markdown.Kind.SECTION;
+    taskAppend = false;
     targetLine = -1;
     targetSource = "";
     appendTaskText = true;
@@ -220,6 +249,7 @@ public final class EditorState {
   }
 
   public void edit(String value) {
+    if (taskAppend) value = DiaryTasks.addition(value);
     Parts parts = parts();
     text = joinEditable(parts, TaggedText.parse(editableBody(parts)).edit(value).render());
   }
