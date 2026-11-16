@@ -124,6 +124,20 @@ public final class SafVaultStorage implements VaultStorage {
     return List.copyOf(list);
   }
 
+  public long modifiedMillis(String path) throws IOException {
+    try (Cursor cursor =
+        context
+            .getContentResolver()
+            .query(
+                resolve(path),
+                new String[] {DocumentsContract.Document.COLUMN_LAST_MODIFIED},
+                null,
+                null,
+                null)) {
+      return cursor != null && cursor.moveToFirst() ? cursor.getLong(0) : 0;
+    }
+  }
+
   @Override
   public void visitDailyNotes(BooleanSupplier cancelled, NoteVisitor visitor) throws IOException {
     if (cancelled.getAsBoolean()) return;

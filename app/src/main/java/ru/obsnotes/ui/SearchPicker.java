@@ -142,8 +142,7 @@ public final class SearchPicker {
         () -> {
           filtered.clear();
           String query = search.getText().toString();
-          for (T item : items)
-            if (FuzzySearch.matches(label.apply(item), query)) filtered.add(item);
+          filtered.addAll(FuzzySearch.ranked(items, query, label));
           adapter.notifyDataSetChanged();
         };
     ui.watch(search, value -> filter.run());
@@ -153,7 +152,8 @@ public final class SearchPicker {
       dialog
           .getWindow()
           .setSoftInputMode(
-              WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+              WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
                   | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+    ui.focusInput(search);
   }
 }

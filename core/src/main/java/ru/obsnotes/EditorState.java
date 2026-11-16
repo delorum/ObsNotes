@@ -18,6 +18,7 @@ public final class EditorState {
   public boolean fresh = true;
   public boolean appendTaskText = true;
   public boolean editFields = false, routesInitialized = false, routeChosen = false;
+  public boolean weatherForm = false;
   public String fallbackHeading = "";
   public List<Routing.Choice> routes = List.of();
 
@@ -27,6 +28,42 @@ public final class EditorState {
 
   public boolean emptyNote() {
     return TaggedText.parse(parts().body).clean.isBlank();
+  }
+
+  public static EditorState weather(String path, Markdown source) {
+    EditorState state = new EditorState();
+    state.sourcePath = state.destinationPath = path;
+    state.sourceSnapshot = state.destinationSnapshot = source.text;
+    state.fresh = false;
+    state.weatherForm = true;
+    state.editFields = true;
+    state.heading = "## Погода";
+    state.original =
+        state.text =
+            "Погода:: "
+                + InlineFields.value(source, "Погода")
+                + "\nТемпература:: "
+                + InlineFields.value(source, "Температура");
+    return state;
+  }
+
+  public void addWeather(WeatherSummary summary) {
+    for (int i = 0; i < fieldCount(); i++) {
+      String addition =
+          fieldName(i).equals("Погода")
+              ? summary.weather()
+              : fieldName(i).equals("Температура") ? summary.temperature() : "";
+      if (!addition.isBlank()) editField(i, InlineFields.append(fieldValue(i), addition));
+    }
+  }
+
+  public Markdown savedWeather(Markdown source, Markdown template) {
+    Map<String, String> before = new HashMap<>();
+    for (var field : FieldBlock.parse(original).fields()) before.put(field.key(), field.value());
+    Map<String, String> values = new LinkedHashMap<>();
+    for (var field : FieldBlock.parse(text).fields())
+      if (!field.value().equals(before.get(field.key()))) values.put(field.key(), field.value());
+    return InlineFields.write(source, values, "## Погода", template);
   }
 
   public void chooseTarget(Markdown.Target target) {

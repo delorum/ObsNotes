@@ -79,4 +79,54 @@ public final class DayOutline {
       }
     return List.copyOf(result);
   }
+
+  public static List<Section> search(Markdown document, Markdown template, String query) {
+    List<Section> roots = sections(document, template);
+    return search(roots, new Routing.Catalog(document, template), query);
+  }
+
+  public static List<Section> search(List<Section> roots, Routing.Catalog catalog, String query) {
+    if (query.isBlank()) return roots;
+    List<Section> flat = new ArrayList<>();
+    flatten(roots, flat);
+    return FuzzySearch.ranked(
+        flat,
+        query,
+        s ->
+            catalog.searchLabel(
+                catalog.resolve(
+                    new Markdown.Target(s.title(), s.heading(), -1, "", Markdown.Kind.SECTION))));
+  }
+
+  private static void flatten(List<Section> source, List<Section> out) {
+    for (var section : source) {
+      out.add(
+          new Section(
+              section.heading(),
+              section.title(),
+              section.blocks(),
+              section.projections(),
+              List.of()));
+      flatten(section.children(), out);
+    }
+  }
+
+  public static List<String> ancestors(Markdown doc, Markdown template, String heading) {
+    return ancestors(sections(doc, template), heading);
+  }
+
+  public static List<String> ancestors(List<Section> roots, String heading) {
+    List<String> path = new ArrayList<>();
+    find(roots, heading, path);
+    return path;
+  }
+
+  private static boolean find(List<Section> roots, String heading, List<String> path) {
+    for (var s : roots) {
+      path.add(s.heading());
+      if (s.heading().equals(heading) || find(s.children(), heading, path)) return true;
+      path.remove(path.size() - 1);
+    }
+    return false;
+  }
 }

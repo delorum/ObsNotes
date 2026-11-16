@@ -39,6 +39,13 @@ public final class MainActivity extends AppCompatActivity {
   private boolean busy = false, connected = false;
   private boolean foreground = false, conflictPending = false;
   private android.app.Dialog conflictDialog;
+  private String sectionQuery = "";
+  private final ExecutorService weatherIo = Executors.newSingleThreadExecutor();
+  private Future<?> weatherJob;
+  private long weatherVersion;
+  private boolean weatherLoading;
+  private String checklistPath = "", checklistText = "";
+  private DailyChecklist.Context checklistContext;
   private final Set<String> expanded = new HashSet<>(Set.of("## Заметки"));
   private final Runnable poll =
       new Runnable() {
@@ -114,6 +121,8 @@ public final class MainActivity extends AppCompatActivity {
 
   @Override
   protected void onDestroy() {
+    cancelWeather();
+    weatherIo.shutdownNow();
     if (conflictDialog != null) conflictDialog.dismiss();
     handler.removeCallbacksAndMessages(null);
     if (relationsDialog != null) relationsDialog.dismiss();
@@ -172,6 +181,8 @@ public final class MainActivity extends AppCompatActivity {
       VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
+    cancelWeather();
+    checklistContext = null;
     cancelNavigation();
     work(
         () -> {
@@ -223,6 +234,7 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void loadDay() {
+    checklistContext = null;
     navigateTo(day, true);
   }
 
@@ -342,6 +354,7 @@ public final class MainActivity extends AppCompatActivity {
         template,
         connected,
         expanded,
+        sectionQuery,
         new DayScreen.Actions() {
           public void settings() {
             if (!busy) showSettings();
@@ -387,6 +400,27 @@ public final class MainActivity extends AppCompatActivity {
           public void refresh() {
             if (!busy) loadDay();
           }
+
+          public void searchChanged(String value) {
+            sectionQuery = value;
+          }
+
+          public void delete(Markdown.Block block, boolean projection) {
+            deleteBlock(block, projection);
+          }
+
+          public void toggle(DiaryTasks.Task task) {
+            toggleTask(task);
+          }
+
+          public void weather() {
+            startWeather();
+          }
+
+          public void checklist(
+              Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed) {
+            loadChecklist(loaded, failed);
+          }
         });
     if (lastError != null) ui.error(lastError);
   }
@@ -404,6 +438,7 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void startEditor(Markdown.Block block) {
+    cancelWeather();
     cancelNavigation();
     if (document == null) return;
     editor = new EditorState();
@@ -424,6 +459,7 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void restoreEditor() {
+    cancelWeather();
     cancelNavigation();
     editor = recovery.load(vault);
     if (editor != null) showEditor();
@@ -437,6 +473,7 @@ public final class MainActivity extends AppCompatActivity {
         ui,
         editor,
         template,
+        prefs.getString("weatherCity", "vidnoe"),
         new EditorScreen.Actions() {
           public void back() {
             if (!busy) home();
@@ -498,7 +535,16 @@ public final class MainActivity extends AppCompatActivity {
           public void related() {
             showRelations();
           }
+
+          public void weatherLocation() {
+            chooseWeatherLocation();
+          }
+
+          public void fetchWeather() {
+            loadWeather();
+          }
         });
+    ui.loading(weatherLoading);
   }
 
   private void pickTarget() {
@@ -596,6 +642,7 @@ public final class MainActivity extends AppCompatActivity {
 
   private void pickDestination() {
     if (busy) return;
+    stopWeatherInEditor();
     LocalDate source = LocalDate.parse(DiaryLayout.fileName(editor.sourcePath).substring(0, 10));
     SafVaultStorage chosenStorage = storage;
     PastDayPicker.show(
@@ -755,6 +802,7 @@ public final class MainActivity extends AppCompatActivity {
 
   private void resolveConflict(boolean copy) {
     if (busy || editor == null) return;
+    cancelWeather();
     EditorState form = editor;
     String selectedVault = vault;
     work(
@@ -777,6 +825,7 @@ public final class MainActivity extends AppCompatActivity {
 
   private void saveEditor(Runnable after) {
     if (busy || editor == null) return;
+    stopWeatherInEditor();
     cancelNavigation();
     recovery.save(editor, vault);
     EditorState form = editor;
@@ -813,6 +862,7 @@ public final class MainActivity extends AppCompatActivity {
           return true;
         },
         ok -> {
+          checklistContext = null;
           editor = null;
           day = LocalDate.parse(DiaryLayout.fileName(result.path()).substring(0, 10));
           path = result.path();
@@ -820,6 +870,180 @@ public final class MainActivity extends AppCompatActivity {
           showDay();
           if (after != null) after.run();
         });
+  }
+
+  private void applyDayChange(String selectedPath, Markdown before, Markdown after) {
+    if (busy) return;
+    work(
+        () -> {
+          repository.commit(DayEdits.change(selectedPath, before, after));
+          return true;
+        },
+        ok -> {
+          checklistContext = null;
+          if (path.equals(selectedPath)) document = after;
+          showDay();
+        });
+  }
+
+  private void deleteBlock(Markdown.Block block, boolean projection) {
+    if (busy || document == null) return;
+    Markdown before = document;
+    String selectedPath = path;
+    String message =
+        (projection
+                ? "Удалится оригинал из раздела «"
+                    + block.section().title()
+                    + "» и его отображения.\n\n"
+                : "")
+            + CrossReferences.clean(block.text());
+    if (message.length() > 220) message = message.substring(0, 220) + "…";
+    if (!Events.rootId(block.text()).isEmpty())
+      message += "\n\nСвязи с этим корнем перестанут открываться.";
+    new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+        .setTitle("Удалить запись?")
+        .setMessage(message)
+        .setNegativeButton("Отмена", null)
+        .setPositiveButton(
+            "Удалить",
+            (d, w) -> {
+              try {
+                applyDayChange(selectedPath, before, DayEdits.delete(before, block));
+              } catch (IllegalArgumentException error) {
+                ui.error(error.getMessage());
+              }
+            })
+        .show();
+  }
+
+  private void toggleTask(DiaryTasks.Task task) {
+    if (busy || document == null) return;
+    try {
+      applyDayChange(path, document, DiaryTasks.toggle(document, task, day));
+    } catch (IllegalArgumentException error) {
+      ui.error(error.getMessage());
+    }
+  }
+
+  private void loadChecklist(Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed) {
+    Markdown snapshot = document;
+    String selectedPath = path;
+    LocalDate selectedDay = day;
+    SafVaultStorage selectedStorage = storage;
+    if (checklistContext != null
+        && checklistPath.equals(path)
+        && checklistText.equals(snapshot.text)) {
+      loaded.accept(DailyChecklist.rows(snapshot, checklistContext));
+      return;
+    }
+    io.execute(
+        () -> {
+          try {
+            var context = DailyChecklist.load(selectedStorage, selectedPath, selectedDay);
+            runOnUiThread(
+                () -> {
+                  if (!isDestroyed()
+                      && screen.equals("day")
+                      && path.equals(selectedPath)
+                      && document == snapshot) {
+                    checklistContext = context;
+                    checklistPath = selectedPath;
+                    checklistText = snapshot.text;
+                    loaded.accept(DailyChecklist.rows(snapshot, context));
+                  }
+                });
+          } catch (Exception error) {
+            runOnUiThread(
+                () -> {
+                  if (!isDestroyed() && screen.equals("day") && path.equals(selectedPath))
+                    failed.accept("Не удалось загрузить чеклист");
+                });
+          }
+        });
+  }
+
+  private void startWeather() {
+    if (busy || document == null) return;
+    cancelWeather();
+    cancelNavigation();
+    try {
+      editor = EditorState.weather(path, document);
+      recovery.save(editor, vault);
+      showEditor();
+    } catch (IllegalArgumentException error) {
+      ui.error(error.getMessage());
+    }
+  }
+
+  private void cancelWeather() {
+    weatherVersion++;
+    weatherLoading = false;
+    if (weatherJob != null) weatherJob.cancel(true);
+  }
+
+  private void stopWeatherInEditor() {
+    cancelWeather();
+    ui.loading(false);
+  }
+
+  private void chooseWeatherLocation() {
+    if (busy) return;
+    stopWeatherInEditor();
+    WeatherLocationPicker.show(
+        ui,
+        prefs.getString("weatherCity", "vidnoe"),
+        city -> {
+          prefs.edit().putString("weatherCity", city).apply();
+          showEditor();
+        });
+  }
+
+  private void loadWeather() {
+    if (busy || editor == null || weatherLoading) return;
+    EditorState form = editor;
+    String city = prefs.getString("weatherCity", "vidnoe");
+    LocalDate date = LocalDate.parse(DiaryLayout.fileName(form.destinationPath).substring(0, 10));
+    long token = ++weatherVersion;
+    weatherLoading = true;
+    ui.error(null);
+    ui.loading(true);
+    weatherJob =
+        weatherIo.submit(
+            () -> {
+              try {
+                var summary = WeatherSummary.fetch(city, date, ZoneId.systemDefault());
+                runOnUiThread(() -> finishWeather(token, form, summary, null));
+              } catch (Exception error) {
+                runOnUiThread(
+                    () ->
+                        finishWeather(
+                            token,
+                            form,
+                            null,
+                            error.getMessage() == null
+                                ? "Не удалось получить погоду"
+                                : error.getMessage()));
+              }
+            });
+  }
+
+  private void finishWeather(long token, EditorState form, WeatherSummary summary, String error) {
+    if (isDestroyed() || token != weatherVersion || editor != form) return;
+    if (busy) {
+      handler.postDelayed(() -> finishWeather(token, form, summary, error), 100);
+      return;
+    }
+    weatherLoading = false;
+    ui.loading(false);
+    if (summary != null) {
+      String before = editor.text;
+      editor.addWeather(summary);
+      if (!editor.text.equals(before)) {
+        recovery.save(editor, vault);
+        showEditor();
+      }
+    }
+    if (error != null) ui.error(error);
   }
 
   private void showSettings() {

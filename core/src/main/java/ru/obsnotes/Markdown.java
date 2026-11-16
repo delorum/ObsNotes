@@ -229,16 +229,17 @@ public final class Markdown {
 
   public List<Target> targets(Markdown template) {
     List<Target> result = new ArrayList<>();
+    var entries = MarkdownLines.scan(text);
     for (Section s : template.sections)
       result.add(new Target(s.title, s.heading, -1, "", Kind.SECTION));
     for (Section s : sections) {
       if (result.stream().noneMatch(t -> t.heading.equals(s.heading)))
         result.add(new Target(s.title, s.heading, -1, "", Kind.SECTION));
-      int at = s.body;
-      boolean fence = false;
-      for (String line : text.substring(s.body, s.end).split("\\r?\\n", -1)) {
-        if (line.startsWith("```") || line.startsWith("~~~")) fence = !fence;
-        if (!fence && (TASK.matcher(line).matches() || FIELD.matcher(line).matches()))
+      for (var entry : entries) {
+        String line = entry.text();
+        int at = entry.start();
+        if (at < s.body || at >= s.end || entry.literal()) continue;
+        if (TASK.matcher(line).matches() || FIELD.matcher(line).matches())
           result.add(
               new Target(
                   s.title + " / " + line,
@@ -246,7 +247,6 @@ public final class Markdown {
                   at,
                   line,
                   TASK.matcher(line).matches() ? Kind.TASK : Kind.FIELD));
-        at += line.length() + newline.length();
       }
     }
     return result;
@@ -272,11 +272,12 @@ public final class Markdown {
     if (value.contains("\n"))
       throw new IllegalArgumentException("Для задачи нужен однострочный блок");
     String line = target.source.replaceFirst("\\[ \\]", "[x]");
-    Matcher done = Pattern.compile("(\\s*✅\\s*\\d{4}-\\d{2}-\\d{2})\\s*$").matcher(line);
-    String marker = done.find() ? done.group(1) : " ✅ " + date;
-    if (done.find(0)) line = line.substring(0, done.start());
+    String oldDate = DiaryTasks.doneDate(line);
+    LocalDate completion =
+        DiaryTasks.isDiary(line) || oldDate.isEmpty() ? date : LocalDate.parse(oldDate);
+    line = DiaryTasks.withoutDone(line);
     if (!value.isBlank() && !line.toLowerCase(Locale.ROOT).contains(value.toLowerCase(Locale.ROOT)))
-      line += "; " + value;
+      line = DiaryTasks.appendBeforeAnchor(line, "; " + value);
     String tagged = line;
     List<String> missing =
         crossIds.stream()
@@ -290,8 +291,9 @@ public final class Markdown {
                   return true;
                 })
             .collect(java.util.stream.Collectors.toList());
-    if (!missing.isEmpty()) line += " #crossPeople/" + String.join("", missing);
-    return replaceTarget(target, line + marker);
+    if (!missing.isEmpty())
+      line = DiaryTasks.appendBeforeAnchor(line, " #crossPeople/" + String.join("", missing));
+    return replaceTarget(target, DiaryTasks.mark(line, true, completion));
   }
 
   private Markdown replaceTarget(Target target, String result) {

@@ -3,7 +3,7 @@ java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
 }
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies { implementation("org.jsoup:jsoup:1.24.1"); testImplementation("junit:junit:4.13.2") }
 tasks.test {
     useJUnit()
     jvmArgs("--add-modules", "jdk.httpserver")

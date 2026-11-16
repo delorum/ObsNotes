@@ -36,17 +36,24 @@ public final class EditorScreen {
     void link();
 
     void related();
+
+    void weatherLocation();
+
+    void fetchWeather();
   }
 
-  public static void show(Ui ui, EditorState state, Markdown template, Actions actions) {
+  public static void show(
+      Ui ui, EditorState state, Markdown template, String weatherCity, Actions actions) {
     String title =
-        state.fieldCount() == 1
-            ? state.fieldName(0)
-            : state.fieldCount() > 1
-                ? "Поля"
-                : state.kind == Markdown.Kind.FIELD
-                    ? state.routingCatalog(template).resolve(state.target()).label()
-                    : state.fresh ? "Новая заметка" : "Текстовый блок";
+        state.weatherForm
+            ? "Погода"
+            : state.fieldCount() == 1
+                ? state.fieldName(0)
+                : state.fieldCount() > 1
+                    ? "Поля"
+                    : state.kind == Markdown.Kind.FIELD
+                        ? state.routingCatalog(template).resolve(state.target()).label()
+                        : state.fresh ? "Новая заметка" : "Текстовый блок";
     ui.page(title, actions::back);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
@@ -56,8 +63,15 @@ public final class EditorScreen {
     metadata.setChipSpacingVertical(0);
     List<EditText> edits = new ArrayList<>();
     if (state.fieldCount() > 0)
-      for (int i = 0; i < state.fieldCount(); i++)
-        edits.add(ui.field(ui.body, state.fieldName(i), state.fieldValue(i), false, null));
+      for (int i = 0; i < state.fieldCount(); i++) {
+        EditText field =
+            ui.field(ui.body, state.fieldName(i), state.fieldValue(i), state.weatherForm, null);
+        if (state.weatherForm) {
+          field.setMinLines(1);
+          field.setMaxLines(4);
+        }
+        edits.add(field);
+      }
     else
       edits.add(
           ui.field(
@@ -66,7 +80,11 @@ public final class EditorScreen {
               state.editableText(),
               true,
               null));
-    Runnable refresh = () -> metadata(ui, state, catalog, metadata, actions, edits);
+    Runnable refresh =
+        () -> {
+          if (state.weatherForm) highlight(edits, state);
+          else metadata(ui, state, catalog, metadata, actions, edits);
+        };
     for (int i = 0; i < edits.size(); i++) {
       int index = i;
       EditText edit = edits.get(i);
@@ -85,8 +103,18 @@ public final class EditorScreen {
       int at = state.cursor - offset(edits, i);
       if (at >= 0 && at <= edit.length()) edit.setSelection(at);
     }
+    if (state.weatherForm) {
+      refresh.run();
+      weatherRow(ui, state, weatherCity, actions);
+      return;
+    }
     ui.body.addView(metadata);
     refresh.run();
+    for (int i = 0; i < state.fieldCount(); i++)
+      if (state.fieldName(i).equals("Погода") || state.fieldName(i).equals("Температура")) {
+        weatherRow(ui, state, weatherCity, actions);
+        break;
+      }
     TextView hint = ui.text(hint(state), 12, Ui.MUTED);
     LinearLayout dates = ui.row();
     ui.weighted(
@@ -157,6 +185,24 @@ public final class EditorScreen {
             ? "Будет сохранена только отметка выполнения задачи."
             : "Задача будет отмечена без текста. Исходный блок уберётся из прежнего раздела.")
         : "Изменения сохраняются при выходе. Метки и связи — под текстом.";
+  }
+
+  private static void weatherRow(Ui ui, EditorState state, String city, Actions actions) {
+    LinearLayout row = ui.row();
+    String name =
+        WeatherSummary.LOCATIONS.stream()
+            .filter(l -> l.code().equals(city))
+            .map(WeatherSummary.Location::name)
+            .findFirst()
+            .orElse(city);
+    ui.weighted(
+        row,
+        ui.button(
+            name + " · " + DiaryLayout.fileName(state.destinationPath).substring(0, 10),
+            actions::weatherLocation));
+    ui.action(
+        row, ru.obsnotes.R.drawable.ic_weather, "Добавить погоду nuipogoda", actions::fetchWeather);
+    ui.body.addView(row);
   }
 
   private static int offset(List<EditText> edits, int index) {

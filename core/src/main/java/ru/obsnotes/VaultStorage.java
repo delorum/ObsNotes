@@ -11,6 +11,10 @@ public interface VaultStorage {
 
   List<String> dailyNotes() throws IOException;
 
+  default long modifiedMillis(String path) throws IOException {
+    return 0;
+  }
+
   @FunctionalInterface
   interface NoteVisitor {
     void visit(String path) throws IOException;

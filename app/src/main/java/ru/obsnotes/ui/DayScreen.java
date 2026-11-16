@@ -27,6 +27,16 @@ public final class DayScreen {
     void edit(Markdown.Block block);
 
     void refresh();
+
+    void delete(Markdown.Block block, boolean projection);
+
+    void toggle(DiaryTasks.Task task);
+
+    void weather();
+
+    void searchChanged(String query);
+
+    void checklist(Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed);
   }
 
   public static void show(
@@ -36,7 +46,10 @@ public final class DayScreen {
       Markdown template,
       boolean connected,
       Set<String> expanded,
+      String query,
       Actions actions) {
+    var previous = ui.activity.getCurrentFocus();
+    boolean searchFocused = previous != null && "section-search".equals(previous.getTag());
     ui.page("ObsNotes", null);
     if (connected) ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     if (connected)
@@ -73,8 +86,54 @@ public final class DayScreen {
       ui.error(DayNavigation.NOT_FOUND);
       return;
     }
-    for (DayOutline.Section section : DayOutline.sections(document, template))
-      section(ui, ui.body, section, expanded, actions);
+    var outline = DayOutline.sections(document, template);
+    var catalog = new Routing.Catalog(document, template);
+    EditText search = ui.field(ui.body, "Поиск разделов", query, false, null);
+    search.setTag("section-search");
+    LinearLayout results = ui.column();
+    ui.body.addView(results);
+    Map<String, android.view.View> headers = new HashMap<>();
+    Runnable[] render = {null};
+    Consumer<String> reveal =
+        heading -> {
+          expanded.addAll(DayOutline.ancestors(outline, heading));
+          ui.hideKeyboard();
+          if (!search.getText().toString().isEmpty()) search.setText("");
+          else render[0].run();
+          ui.scroll.post(
+              () -> {
+                var target = headers.get(heading);
+                if (target != null) {
+                  int y = 0;
+                  android.view.View v = target;
+                  while (v != ui.body && v.getParent() instanceof android.view.View) {
+                    y += v.getTop();
+                    v = (android.view.View) v.getParent();
+                  }
+                  ui.scroll.smoothScrollTo(0, y);
+                }
+              });
+        };
+    render[0] =
+        () -> {
+          results.removeAllViews();
+          headers.clear();
+          for (var section : DayOutline.search(outline, catalog, search.getText().toString()))
+            section(ui, results, section, expanded, actions, headers, reveal);
+          if (results.getChildCount() == 0)
+            results.addView(ui.text("Разделы не найдены", 14, Ui.MUTED));
+        };
+    ui.watch(
+        search,
+        value -> {
+          actions.searchChanged(value);
+          render[0].run();
+        });
+    render[0].run();
+    if (searchFocused) {
+      search.requestFocus();
+      search.setSelection(search.length());
+    }
   }
 
   private static void section(
@@ -82,21 +141,27 @@ public final class DayScreen {
       LinearLayout parent,
       DayOutline.Section section,
       Set<String> expanded,
-      Actions actions) {
+      Actions actions,
+      Map<String, android.view.View> headers,
+      Consumer<String> reveal) {
     String heading = section.heading();
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
+    headers.put(heading, card);
     boolean open = expanded.contains(heading);
     boolean[] populated = {false};
     Runnable populate =
         () -> {
           if (populated[0]) return;
           populated[0] = true;
+          if (heading.equals("## Чеклист")) ChecklistTable.add(ui, content, actions, reveal);
           for (var b : section.blocks())
-            block(ui, content, b, CrossReferences.clean(b.text()), false, expanded, actions);
+            DayBlockView.add(
+                ui, content, b, CrossReferences.clean(b.text()), false, expanded, actions);
           for (var p : section.projections())
-            block(ui, content, p.origin(), p.text(), true, expanded, actions);
-          for (var child : section.children()) section(ui, content, child, expanded, actions);
-          if (section.count() == 0 && section.children().isEmpty())
+            DayBlockView.add(ui, content, p.origin(), p.text(), true, expanded, actions);
+          for (var child : section.children())
+            section(ui, content, child, expanded, actions, headers, reveal);
+          if (section.count() == 0 && section.children().isEmpty() && !heading.equals("## Чеклист"))
             content.addView(ui.text("Пусто", 14, Ui.MUTED));
         };
     var disclosure =
@@ -113,8 +178,12 @@ public final class DayScreen {
             section.count() == 0 && heading.equals("## Заметки") ? Ui.GREEN : Ui.INK));
     if (heading.equals("## Заметки"))
       ui.action(header, ru.obsnotes.R.drawable.ic_add, "Новая заметка", actions::add);
+    if (heading.equals("## Погода"))
+      ui.action(
+          header, ru.obsnotes.R.drawable.ic_weather, "Погода и температура", actions::weather);
     Runnable toggle =
         () -> {
+          ui.hideKeyboard();
           boolean visible = content.getVisibility() != View.VISIBLE;
           if (visible) {
             populate.run();
@@ -134,56 +203,5 @@ public final class DayScreen {
     card.addView(content, contentLayout);
     content.setVisibility(open ? View.VISIBLE : View.GONE);
     if (open) populate.run();
-  }
-
-  private static void block(
-      Ui ui,
-      LinearLayout parent,
-      Markdown.Block block,
-      String text,
-      boolean projection,
-      Set<String> expanded,
-      Actions actions) {
-    String key = block.section().heading() + ":" + block.start() + ":" + projection;
-    LinearLayout box = ui.column(), row = ui.row();
-    boolean open = expanded.contains(key);
-    TextView full =
-        ui.text(text + (projection ? "\n↳ " + block.section().title() : ""), 16, Ui.INK);
-    full.setTextIsSelectable(true);
-    full.setVisibility(open ? View.VISIBLE : View.GONE);
-    var expand =
-        ui.icon(
-            open ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right,
-            "Развернуть текстовый блок",
-            () -> {});
-    expand.setOnClickListener(
-        v -> {
-          boolean visible = full.getVisibility() != View.VISIBLE;
-          full.setVisibility(visible ? View.VISIBLE : View.GONE);
-          if (visible) expanded.add(key);
-          else expanded.remove(key);
-          expand.setIcon(
-              androidx.appcompat.content.res.AppCompatResources.getDrawable(
-                  ui.activity,
-                  visible ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right));
-        });
-    row.addView(expand, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
-    TextView preview =
-        ui.text(
-            CrossReferences.clean(text).lines().findFirst().orElse("Блок"),
-            15,
-            projection ? Ui.ACCENT : Ui.INK);
-    preview.setMaxLines(2);
-    preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    preview.setMinHeight(ui.dp(48));
-    preview.setGravity(android.view.Gravity.CENTER_VERTICAL);
-    ui.weighted(row, preview);
-    preview.setOnClickListener(v -> actions.edit(block));
-    box.addView(row);
-    box.addView(full);
-    full.setOnClickListener(v -> actions.edit(block));
-    LinearLayout.LayoutParams blockLayout = new LinearLayout.LayoutParams(-1, -2);
-    blockLayout.bottomMargin = ui.dp(8);
-    parent.addView(box, blockLayout);
   }
 }

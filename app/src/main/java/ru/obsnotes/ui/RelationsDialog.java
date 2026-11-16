@@ -56,10 +56,7 @@ public final class RelationsDialog {
 
   private void filter() {
     String query = search.getText().toString().strip().toLowerCase(Locale.ROOT);
-    filtered =
-        items.stream()
-            .filter(item -> FuzzySearch.matches(item.label(), query))
-            .collect(java.util.stream.Collectors.toList());
+    filtered = FuzzySearch.ranked(items, query, RelationSearch.Related::label);
     adapter.setNotifyOnChange(false);
     adapter.clear();
     adapter.addAll(

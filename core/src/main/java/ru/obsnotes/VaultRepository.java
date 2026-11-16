@@ -104,6 +104,8 @@ public final class VaultRepository {
       Markdown template,
       LocalDate date,
       LocalDateTime now) {
+    if (state.weatherForm)
+      return DayEdits.change(state.sourcePath, source, state.savedWeather(source, template));
     boolean same = state.sourcePath.equals(state.destinationPath);
     Markdown.Block block = state.fresh ? null : state.originalBlock(source);
     if (!state.taskOnly() && state.emptyNote()) {

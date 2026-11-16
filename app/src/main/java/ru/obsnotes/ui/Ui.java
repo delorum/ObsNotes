@@ -36,6 +36,23 @@ public final class Ui {
     return Math.round(n * activity.getResources().getDisplayMetrics().density);
   }
 
+  public void focusInput(EditText field) {
+    field.requestFocus();
+    field.post(
+        () ->
+            ((android.view.inputmethod.InputMethodManager)
+                    activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
+                .showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT));
+  }
+
+  public void hideKeyboard() {
+    var focus = activity.getCurrentFocus();
+    if (focus != null)
+      ((android.view.inputmethod.InputMethodManager)
+              activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
+          .hideSoftInputFromWindow(focus.getWindowToken(), 0);
+  }
+
   public LinearLayout column() {
     LinearLayout v = new LinearLayout(activity);
     v.setOrientation(LinearLayout.VERTICAL);

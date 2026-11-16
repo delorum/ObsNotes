@@ -2,12 +2,13 @@ plugins { id("com.android.application") }
 android {
  namespace = "ru.obsnotes"
  compileSdk { version = release(36) { minorApiLevel = 1 } }
- defaultConfig { applicationId = "ru.obsnotes"; minSdk = 33; targetSdk = 36; versionCode = 6; versionName = "0.1.5" }
+ defaultConfig { applicationId = "ru.obsnotes"; minSdk = 33; targetSdk = 36; versionCode = 7; versionName = "0.1.6" }
  buildFeatures { buildConfig = true }
- compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+ compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
  buildTypes { release { isMinifyEnabled = false } }
 }
 dependencies {
+ coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
  implementation(project(":core"))
  implementation("androidx.core:core-ktx:1.12.0")
  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
