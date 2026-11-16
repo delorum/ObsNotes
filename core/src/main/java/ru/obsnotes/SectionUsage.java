@@ -79,6 +79,15 @@ public final class SectionUsage {
   /** Compute before committing; record the returned events only after a successful commit. */
   public static List<Use> planned(
       EditorState state, Markdown template, List<VaultRepository.Change> changes) {
+    if (state.parts != null) {
+      List<Use> uses = new ArrayList<>();
+      for (int i = 0; i < state.parts.parts.size(); i++) {
+        EditorState part = state.parts.parts.get(i).form().copy();
+        part.fresh = i == 0 ? state.fresh : true;
+        uses.addAll(planned(part, template, changes));
+      }
+      return List.copyOf(new LinkedHashSet<>(uses));
+    }
     if (state.weatherForm
         || (!state.taskOnly() && state.emptyNote())
         || changes.stream().noneMatch(c -> !c.before().equals(c.after()))) return List.of();

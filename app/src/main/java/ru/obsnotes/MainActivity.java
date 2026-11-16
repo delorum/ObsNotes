@@ -500,6 +500,9 @@ public final class MainActivity extends AppCompatActivity {
   private void showEditor() {
     cancelNavigation();
     editor.initializeRoutes(template);
+    editor.enableParts(template);
+    if (editor.parts != null)
+      for (var part : editor.parts.parts) part.form().initializeRoutes(template);
     screen = "editor";
     EditorScreen.show(
         ui,
@@ -517,6 +520,10 @@ public final class MainActivity extends AppCompatActivity {
 
           public void changed() {
             recovery.save(editor, vault);
+          }
+
+          public void part(int index) {
+            if (editor.parts != null) editor.parts.selected = index;
           }
 
           public void sections() {
@@ -551,7 +558,7 @@ public final class MainActivity extends AppCompatActivity {
           public void root() {
             if (!busy) {
               try {
-                editor.text = Events.root(editor.text);
+                editor.activePart().text = Events.root(editor.activePart().text);
                 recovery.save(editor, vault);
                 showEditor();
               } catch (IllegalArgumentException e) {
@@ -581,7 +588,8 @@ public final class MainActivity extends AppCompatActivity {
 
   private void pickTarget() {
     if (busy) return;
-    var catalog = editor.routingCatalog(template);
+    EditorState form = editor.activePart();
+    var catalog = form.routingCatalog(template);
     List<Routing.Choice> choices = routeChoices(catalog);
     SearchPicker.show(
         ui,
@@ -589,11 +597,11 @@ public final class MainActivity extends AppCompatActivity {
         choices,
         catalog::searchLabel,
         true,
-        editor.pickerRoutes(),
-        editor::validateRoutes,
+        form.pickerRoutes(),
+        choicesToCheck -> validatePartRoutes(form, choicesToCheck),
         selected -> {
           try {
-            editor.applyRoutes(selected, catalog);
+            form.applyRoutes(selected, catalog);
             recovery.save(editor, vault);
             showEditor();
           } catch (IllegalArgumentException error) {
@@ -602,29 +610,37 @@ public final class MainActivity extends AppCompatActivity {
         });
   }
 
+  private String validatePartRoutes(EditorState form, List<Routing.Choice> choices) {
+    return editor.parts == null
+        ? form.validateRoutes(choices)
+        : editor.parts.validateRoutes(form, choices);
+  }
+
   private List<Routing.Choice> routeChoices(Routing.Catalog catalog) {
+    EditorState form = editor.activePart();
     return usage
         .load(vault)
         .rankedRoutes(
             catalog.choices.stream()
-                .filter(c -> !editor.editFields || c.target().kind() == Markdown.Kind.SECTION)
+                .filter(c -> !form.editFields || c.target().kind() == Markdown.Kind.SECTION)
                 .filter(
                     c ->
-                        editor.fresh
-                            || !editor.sourcePath.equals(editor.destinationPath)
+                        form.fresh
+                            || !form.sourcePath.equals(form.destinationPath)
                             || c.target().kind() == Markdown.Kind.SECTION
-                            || c.target().line() < editor.start
-                            || c.target().line() >= editor.end)
+                            || c.target().line() < form.start
+                            || c.target().line() >= form.end)
                 .collect(java.util.stream.Collectors.toList()));
   }
 
   private void pickRouteReplacement(int index) {
     if (busy) return;
-    var catalog = editor.routingCatalog(template);
-    var current = editor.routes.get(index);
+    EditorState form = editor.activePart();
+    var catalog = form.routingCatalog(template);
+    var current = form.routes.get(index);
     var choices =
         routeChoices(catalog).stream()
-            .filter(c -> c.equals(current) || !editor.routes.contains(c))
+            .filter(c -> c.equals(current) || !form.routes.contains(c))
             .filter(
                 c ->
                     index == 0
@@ -637,9 +653,9 @@ public final class MainActivity extends AppCompatActivity {
         catalog::searchLabel,
         false,
         List.of(current),
-        selected -> editor.validateRoutes(editor.replacingRoute(index, selected.get(0))),
+        selected -> validatePartRoutes(form, form.replacingRoute(index, selected.get(0))),
         selected -> {
-          editor.replaceRoute(index, selected.get(0), catalog);
+          form.replaceRoute(index, selected.get(0), catalog);
           recovery.save(editor, vault);
           showEditor();
         });
@@ -647,9 +663,10 @@ public final class MainActivity extends AppCompatActivity {
 
   private void pickTagReplacement(int index) {
     if (busy) return;
-    var catalog = editor.routingCatalog(template);
-    var tag = editor.tags().get(index);
-    var options = TagChoices.of(template, tag.person(), editor.unmanagedCrossIds(tag, catalog));
+    EditorState form = editor.activePart();
+    var catalog = form.routingCatalog(template);
+    var tag = form.tags().get(index);
+    var options = TagChoices.of(template, tag.person(), form.unmanagedCrossIds(tag, catalog));
     SearchPicker.show(
         ui,
         "Заменить метку",
@@ -661,7 +678,7 @@ public final class MainActivity extends AppCompatActivity {
         true,
         selected -> {
           try {
-            editor.replaceTag(
+            form.replaceTag(
                 index,
                 selected.stream()
                     .map(CrossReferences.Destination::id)
@@ -715,6 +732,7 @@ public final class MainActivity extends AppCompatActivity {
 
   private void pickTags(boolean oneLine, boolean person, int cursor) {
     if (busy) return;
+    EditorState form = editor.activePart();
     SearchPicker.show(
         ui,
         oneLine ? "Показать строку в разделах" : "Показать блок в разделах",
@@ -725,7 +743,7 @@ public final class MainActivity extends AppCompatActivity {
         d -> d.id() + " · " + d.title(),
         true,
         selected -> {
-          editor.addTags(
+          form.addTags(
               cursor,
               selected.stream()
                   .map(CrossReferences.Destination::id)
@@ -755,7 +773,7 @@ public final class MainActivity extends AppCompatActivity {
                 false,
                 selected -> {
                   try {
-                    editor.attach(selected.get(0));
+                    editor.activePart().attach(selected.get(0));
                   } catch (IllegalArgumentException e) {
                     ui.error(e.getMessage());
                     return;
@@ -772,7 +790,9 @@ public final class MainActivity extends AppCompatActivity {
 
   private void showRelations() {
     if (busy || editor == null) return;
-    String source = editor.sourcePath, text = editor.text, snapshot = editor.sourceSnapshot;
+    String source = editor.sourcePath,
+        text = editor.activePart().text,
+        snapshot = editor.sourceSnapshot;
     if (!Events.hasRelations(source, text)) {
       Toast.makeText(this, "У блока нет связей", Toast.LENGTH_SHORT).show();
       return;

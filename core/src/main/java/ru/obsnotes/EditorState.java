@@ -23,6 +23,61 @@ public final class EditorState {
   public String fallbackHeading = "";
   public List<Routing.Choice> routes = List.of();
 
+  public EditorParts parts;
+
+  public void enableParts(Markdown template) {
+    if (parts == null && !weatherForm && !taskAppend && !editFields) parts = new EditorParts(this);
+    if (parts != null) {
+      parts.template = template;
+      parts.sync();
+    }
+  }
+
+  public EditorState activePart() {
+    return parts == null ? this : parts.selected();
+  }
+
+  /** Copy a paragraph form without recursively copying the shared editor. */
+  public EditorState copy() {
+    EditorState s = new EditorState();
+    s.sourcePath = sourcePath;
+    s.original = original;
+    s.text = text;
+    s.destinationPath = destinationPath;
+    s.heading = heading;
+    s.targetSource = targetSource;
+    s.sourceSnapshot = sourceSnapshot;
+    s.destinationSnapshot = destinationSnapshot;
+    s.rootPath = rootPath;
+    s.rootOriginal = rootOriginal;
+    s.rootReplacement = rootReplacement;
+    s.rootSnapshot = rootSnapshot;
+    s.start = start;
+    s.end = end;
+    s.targetLine = targetLine;
+    s.cursor = cursor;
+    s.kind = kind;
+    s.fresh = fresh;
+    s.appendTaskText = appendTaskText;
+    s.editFields = editFields;
+    s.routesInitialized = routesInitialized;
+    s.routeChosen = routeChosen;
+    s.weatherForm = weatherForm;
+    s.taskAppend = taskAppend;
+    s.fallbackHeading = fallbackHeading;
+    s.routes = List.copyOf(routes);
+    return s;
+  }
+
+  void replaceBody(String body) {
+    text = parts().join(body);
+  }
+
+  void clearEventMetadata() {
+    text = parts().body;
+    rootPath = rootOriginal = rootReplacement = rootSnapshot = "";
+  }
+
   private static EditorState at(String path, Markdown source, String heading) {
     EditorState state = new EditorState();
     state.sourcePath = state.destinationPath = path;
@@ -97,6 +152,7 @@ public final class EditorState {
   }
 
   public boolean emptyNote() {
+    if (parts != null) return parts.value.isBlank();
     return TaggedText.parse(parts().body).clean.isBlank();
   }
 
@@ -153,6 +209,9 @@ public final class EditorState {
   }
 
   public void chooseDay(String path, String snapshot) {
+    if (parts != null) {
+      for (var part : parts.parts) part.form().chooseDay(path, snapshot);
+    }
     if (!path.equals(sourcePath)
         && DiaryLayout.fileName(path)
                 .substring(0, 10)
@@ -241,14 +300,20 @@ public final class EditorState {
   }
 
   public String editableText() {
+    if (parts != null) return parts.value;
     return TaggedText.parse(editableBody(parts())).clean;
   }
 
   public List<TaggedText.Tag> tags() {
+    if (parts != null) return parts.tags();
     return TaggedText.parse(editableBody(parts())).tags;
   }
 
   public void edit(String value) {
+    if (parts != null) {
+      parts.edit(value);
+      return;
+    }
     if (taskAppend) value = DiaryTasks.addition(value);
     Parts parts = parts();
     text = joinEditable(parts, TaggedText.parse(editableBody(parts)).edit(value).render());
@@ -416,6 +481,7 @@ public final class EditorState {
 
   /** A conflict copy preserves the visible text, without duplicating anchors or active keys. */
   public String conflictCopyText() {
+    if (parts != null) return FieldBlock.labels(parts.value);
     String value = FieldBlock.labels(TaggedText.parse(parts().body).clean);
     if (kind == Markdown.Kind.FIELD && !editFields) {
       var field = Markdown.FIELD.matcher(targetSource);

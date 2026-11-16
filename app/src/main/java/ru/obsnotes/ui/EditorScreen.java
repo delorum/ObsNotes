@@ -11,6 +11,8 @@ public final class EditorScreen {
   private EditorScreen() {}
 
   public interface Actions {
+    void part(int index);
+
     void back();
 
     void save();
@@ -44,6 +46,10 @@ public final class EditorScreen {
 
   public static void show(
       Ui ui, EditorState state, Markdown template, String weatherCity, Actions actions) {
+    if (state.parts != null) {
+      EditorPartsScreen.show(ui, state, template, actions);
+      return;
+    }
     String title =
         state.weatherForm
             ? "Погода"
@@ -248,7 +254,7 @@ public final class EditorScreen {
     return fallback;
   }
 
-  private static void metadata(
+  static void metadata(
       Ui ui,
       EditorState state,
       Routing.Catalog catalog,
@@ -324,7 +330,7 @@ public final class EditorScreen {
     Ui.GREEN, 0xffe8be63, 0xff7cb4ed, 0xffef9ba5, 0xff6bcfc3, 0xffe6a66c
   };
 
-  private static int lineColor(int index) {
+  static int lineColor(int index) {
     return LINE_COLORS[index % LINE_COLORS.length];
   }
 
@@ -347,7 +353,7 @@ public final class EditorScreen {
     }
   }
 
-  private static Chip chip(Ui ui, String label, int color) {
+  static Chip chip(Ui ui, String label, int color) {
     Chip chip = new Chip(ui.activity);
     chip.setText(label);
     chip.setMaxWidth(ui.dp(310));

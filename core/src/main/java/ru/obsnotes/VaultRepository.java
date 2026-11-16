@@ -115,6 +115,8 @@ public final class VaultRepository {
       LocalDate date,
       LocalDateTime now,
       CleanupRules rules) {
+    if (state.parts != null)
+      return state.parts.plan(state, source, destination, template, date, now, rules);
     if (state.weatherForm)
       return DayEdits.change(state.sourcePath, source, state.savedWeather(source, template));
     boolean same = state.sourcePath.equals(state.destinationPath);
