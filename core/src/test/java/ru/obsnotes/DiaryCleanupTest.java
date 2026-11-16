@@ -6,6 +6,9 @@ import java.time.*;
 import org.junit.Test;
 
 public class DiaryCleanupTest {
+  private static final CleanupRules RULES =
+      CleanupRules.parse("## Пустые маркеры\n- вчера\n- позавчера\n");
+
   @Test
   public void collapsesBlanksAndDropsOrphanStampsAndWords() {
     String text =
@@ -17,13 +20,14 @@ public class DiaryCleanupTest {
             + "событие\n\n\n"
             + "## Дела\n";
     assertEquals(
-        "## Заметки\n\n2026-11-15 11:00:00\nсобытие\n\n## Дела\n", DiaryCleanup.compress(text));
+        "## Заметки\n\n2026-11-15 11:00:00\nсобытие\n\n## Дела\n",
+        DiaryCleanup.compress(text, RULES));
   }
 
   @Test
   public void keepsWordsAndTimestampsThatHaveFollowingContent() {
     String text = "## Заметки\n2026-11-15 10:00:00\nвчера\nсобытие ^anchor\n";
-    assertEquals(text, DiaryCleanup.compress(text));
+    assertEquals(text, DiaryCleanup.compress(text, RULES));
   }
 
   @Test
@@ -37,7 +41,8 @@ public class DiaryCleanupTest {
                 + "текст\n"
                 + "2026-11-15 12:00:00\n"
                 + "## Далее\n"
-                + "2026-11-15 13:00:00\n"));
+                + "2026-11-15 13:00:00\n",
+            RULES));
   }
 
   @Test
@@ -60,14 +65,14 @@ public class DiaryCleanupTest {
             + "> script();\n"
             + "> ```\n";
     text = text.replace("\n", "\r\n");
-    assertEquals(text, DiaryCleanup.compress(text));
+    assertEquals(text, DiaryCleanup.compress(text, RULES));
   }
 
   @Test
   public void compressionIsIdempotentWithAndWithoutFinalNewline() {
     for (String text : new String[] {"a\n\n\nвчера", "a\n\n\nвчера\n", "\n\n", ""}) {
-      String once = DiaryCleanup.compress(text);
-      assertEquals(once, DiaryCleanup.compress(once));
+      String once = DiaryCleanup.compress(text, RULES);
+      assertEquals(once, DiaryCleanup.compress(once, RULES));
       assertFalse(once.contains("\n\n\n"));
     }
   }
@@ -86,7 +91,7 @@ public class DiaryCleanupTest {
     s.end = b.end();
     s.heading = "## Дела";
     String after =
-        VaultRepository.plan(s, from, from, from, LocalDate.now(), LocalDateTime.now())
+        VaultRepository.plan(s, from, from, from, LocalDate.now(), LocalDateTime.now(), RULES)
             .get(0)
             .after();
     assertFalse(after.contains("10:00:00"));
@@ -108,7 +113,8 @@ public class DiaryCleanupTest {
     s.end = b.end();
     s.heading = "## Дела";
     var changes =
-        VaultRepository.plan(s, from, to, to, LocalDate.of(2026, 11, 14), LocalDateTime.now());
+        VaultRepository.plan(
+            s, from, to, to, LocalDate.of(2026, 11, 14), LocalDateTime.now(), RULES);
     assertEquals(to.text, changes.get(0).before());
     assertEquals(from.text, changes.get(1).before());
     assertEquals("## Заметки\n\n", changes.get(1).after());
@@ -126,7 +132,8 @@ public class DiaryCleanupTest {
     s.destinationPath = "past.md";
     s.text = "событие";
     s.heading = "## Дела";
-    var changes = VaultRepository.plan(s, from, to, to, LocalDate.now(), LocalDateTime.now());
+    var changes =
+        VaultRepository.plan(s, from, to, to, LocalDate.now(), LocalDateTime.now(), RULES);
     assertEquals(from.text, changes.get(1).after());
   }
 }

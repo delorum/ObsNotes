@@ -104,6 +104,17 @@ public final class VaultRepository {
       Markdown template,
       LocalDate date,
       LocalDateTime now) {
+    return plan(state, source, destination, template, date, now, CleanupRules.EMPTY);
+  }
+
+  public static List<Change> plan(
+      EditorState state,
+      Markdown source,
+      Markdown destination,
+      Markdown template,
+      LocalDate date,
+      LocalDateTime now,
+      CleanupRules rules) {
     if (state.weatherForm)
       return DayEdits.change(state.sourcePath, source, state.savedWeather(source, template));
     boolean same = state.sourcePath.equals(state.destinationPath);
@@ -113,7 +124,8 @@ public final class VaultRepository {
       if (!Events.id(block.text()).isEmpty())
         throw new IllegalArgumentException("Блок с якорем нельзя удалить");
       return clean(
-          List.of(new Change(state.sourcePath, source.text, source.replace(block, "").text)));
+          List.of(new Change(state.sourcePath, source.text, source.replace(block, "").text)),
+          rules);
     }
     String text = state.taskOnly() ? "" : state.savedText();
     if (state.taskOnly() && block != null && !Events.id(block.text()).isEmpty())
@@ -129,7 +141,8 @@ public final class VaultRepository {
       return finish(
           List.of(new Change(state.sourcePath, source.text, source.replace(block, text).text)),
           state,
-          false);
+          false,
+          rules);
     Markdown from = state.fresh ? source : source.replace(block, "");
     Markdown to = same ? from : destination;
     Markdown.Target target = state.target();
@@ -160,27 +173,30 @@ public final class VaultRepository {
             ? to.completeTask(target, "", state.crossIds(), date)
             : to.insert(target, payload, date, template);
     if (same)
-      return finish(List.of(new Change(state.sourcePath, source.text, result.text)), state, true);
+      return finish(
+          List.of(new Change(state.sourcePath, source.text, result.text)), state, true, rules);
     return finish(
         List.of(
             new Change(state.destinationPath, destination.text, result.text),
             new Change(state.sourcePath, source.text, from.text)),
         state,
-        true);
+        true,
+        rules);
   }
 
-  private static List<Change> finish(List<Change> changes, EditorState state, boolean compact) {
+  private static List<Change> finish(
+      List<Change> changes, EditorState state, boolean compact, CleanupRules rules) {
     List<Change> result = addRoot(changes, state);
-    return compact ? clean(result) : result;
+    return compact ? clean(result, rules) : result;
   }
 
-  private static List<Change> clean(List<Change> changes) {
+  private static List<Change> clean(List<Change> changes, CleanupRules rules) {
     return changes.stream()
         .map(
             c ->
                 c.before.equals(c.after)
                     ? c
-                    : new Change(c.path, c.before, DiaryCleanup.compress(c.after)))
+                    : new Change(c.path, c.before, DiaryCleanup.compress(c.after, rules)))
         .collect(java.util.stream.Collectors.toList());
   }
 }

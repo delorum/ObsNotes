@@ -135,9 +135,11 @@ class DayNavigationTest(unittest.TestCase):
         cls.relative = (f'Дневник/Хроника/{day.year}/{(day.month - 1)//3 + 1}/'
                         f'{day.month:02}-{months[day.month]}/{day.isocalendar().year}-{day.isocalendar().week}-неделя/'
                         f'{day.isoformat()}-{names[day.weekday()]}.md')
-        template = '## Заметки\n\n## Чеклист\n\n'
+        template = '## Заметки\n\nMoveMe\n\nTestMarker\n\n## Чеклист\n\n'
         template += ''.join(f'## Spacer{i:02}\n\n' for i in range(24))
-        template += ('## Погода\nПогода:: test\nTemperature:: +10\nТемпература:: +10\n\n'
+        template += ('## Погода\n```dataviewjs\n'
+                     'await dv.view("Скрипты/Dataview/crossPeople", {person: "WeatherAlias"});\n```\n'
+                     'Погода:: test\nTemperature:: +10\nТемпература:: +10\n\n'
                      '## Короткая часть\n### Машина\n\n### Спорт и диета\n'
                      '- [ ] #task/diary/diet TestFact\n\n')
         cls.source = template
@@ -149,6 +151,9 @@ class DayNavigationTest(unittest.TestCase):
             path = local / 'Шаблоны/Шаблон дневниковой записи.md'
             path.parent.mkdir(parents=True)
             path.write_text(template)
+            rules = local / 'Скрипты/Настройки/Сжатие дневника.md'
+            rules.parent.mkdir(parents=True)
+            rules.write_text('## Пустые маркеры\n- TestMarker\n')
             adb('push', str(local), '/sdcard/Documents/')
         adb('shell', 'am', 'start', '-n', 'ru.obsnotes/.MainActivity')
         wait_for(lambda: bool(nodes(tree(), desc='Поиск разделов')))
@@ -205,6 +210,24 @@ class DayNavigationTest(unittest.TestCase):
         visible = nodes(tree(), text='TestFact')
         self.assertTrue(visible, 'External update scrolled the task out of view')
         self.assertLessEqual(abs(before[1] - bounds(visible[0])[1]), 3)
+
+    def test_5_moving_a_note_reads_shared_rules_and_compacts_the_actual_file(self):
+        tap(find(desc='Сегодня'))
+        tap(find(text='MoveMe', down=False))
+        tap(find(text='Разделы'))
+        field = next(n for n in tree().iter('node') if n.get('class') == 'android.widget.EditText')
+        self.assertEqual('true', field.get('focused'))
+        adb('shell', 'input', 'text', 'WeatherAlias')
+        tap(find(text='Погода\nWeatherAlias'))
+        tap(find(desc='Назад'))
+        path = PHONE + '/' + self.relative
+        wait_for(lambda: 'TestMarker' not in adb('exec-out', 'cat', path).decode())
+        result = adb('exec-out', 'cat', path).decode()
+        self.assertEqual(1, result.count('MoveMe'))
+        self.assertGreater(result.index('MoveMe'), result.index('## Погода'))
+        self.assertNotIn('\n\n\n', result)
+        self.assertEqual('## Пустые маркеры\n- TestMarker\n',
+                         adb('exec-out', 'cat', PHONE + '/Скрипты/Настройки/Сжатие дневника.md').decode())
 
 
 if __name__ == '__main__':

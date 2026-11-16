@@ -6,7 +6,11 @@ public final class DayEdits {
   private DayEdits() {}
 
   public static Markdown delete(Markdown source, Markdown.Block block) {
-    return new Markdown(DiaryCleanup.compress(source.replace(block, "").text));
+    return delete(source, block, CleanupRules.EMPTY);
+  }
+
+  public static Markdown delete(Markdown source, Markdown.Block block, CleanupRules rules) {
+    return new Markdown(DiaryCleanup.compress(source.replace(block, "").text, rules));
   }
 
   public static List<VaultRepository.Change> change(String path, Markdown before, Markdown after) {

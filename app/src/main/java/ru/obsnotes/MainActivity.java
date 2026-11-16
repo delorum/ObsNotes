@@ -836,55 +836,54 @@ public final class MainActivity extends AppCompatActivity {
     EditorState form = editor;
     String selectedVault = vault;
     Markdown from = new Markdown(form.sourceSnapshot), to = new Markdown(form.destinationSnapshot);
-    final List<VaultRepository.Change> changes;
-    try {
-      LocalDate targetDay =
-          LocalDate.parse(DiaryLayout.fileName(form.destinationPath).substring(0, 10));
-      changes = VaultRepository.plan(form, from, to, template, targetDay, LocalDateTime.now());
-    } catch (IllegalArgumentException error) {
-      lastError = error.getMessage();
-      ui.error(lastError);
-      return;
-    }
-    if (changes.isEmpty()) {
-      recovery.clear(selectedVault);
-      editor = null;
-      lastError = null;
-      showDay();
-      if (after != null) after.run();
-      return;
-    }
-    var result =
-        changes.stream()
-            .filter(c -> c.path().equals(form.destinationPath))
-            .findFirst()
-            .orElse(changes.get(0));
+    SafVaultStorage selectedStorage = storage;
+    Markdown selectedTemplate = template;
     VaultRepository selectedRepository = repository;
     work(
         () -> {
+          LocalDate targetDay =
+              LocalDate.parse(DiaryLayout.fileName(form.destinationPath).substring(0, 10));
+          var changes =
+              VaultRepository.plan(
+                  form,
+                  from,
+                  to,
+                  selectedTemplate,
+                  targetDay,
+                  LocalDateTime.now(),
+                  CleanupRules.load(selectedStorage));
           selectedRepository.commit(changes);
           recovery.clear(selectedVault);
-          return true;
+          return changes;
         },
-        ok -> {
-          checklistContext = null;
+        changes -> {
           editor = null;
-          day = LocalDate.parse(DiaryLayout.fileName(result.path()).substring(0, 10));
-          path = result.path();
-          document = new Markdown(result.after());
+          if (!changes.isEmpty()) {
+            checklistContext = null;
+            var result =
+                changes.stream()
+                    .filter(c -> c.path().equals(form.destinationPath))
+                    .findFirst()
+                    .orElse(changes.get(0));
+            day = LocalDate.parse(DiaryLayout.fileName(result.path()).substring(0, 10));
+            path = result.path();
+            document = new Markdown(result.after());
+          }
           showDay();
           if (after != null) after.run();
         });
   }
 
-  private void applyDayChange(String selectedPath, Markdown before, Markdown after) {
+  private void applyDayChange(String selectedPath, Markdown before, Work<Markdown> update) {
     if (busy) return;
+    VaultRepository selectedRepository = repository;
     work(
         () -> {
-          repository.commit(DayEdits.change(selectedPath, before, after));
-          return true;
+          Markdown after = update.run();
+          selectedRepository.commit(DayEdits.change(selectedPath, before, after));
+          return after;
         },
-        ok -> {
+        after -> {
           if (path.equals(selectedPath)) document = after;
           showDayKeepingPosition();
         });
@@ -894,6 +893,7 @@ public final class MainActivity extends AppCompatActivity {
     if (busy || document == null) return;
     Markdown before = document;
     String selectedPath = path;
+    SafVaultStorage selectedStorage = storage;
     String message =
         (projection
                 ? "Удалится оригинал из раздела «"
@@ -911,22 +911,19 @@ public final class MainActivity extends AppCompatActivity {
         .setPositiveButton(
             "Удалить",
             (d, w) -> {
-              try {
-                applyDayChange(selectedPath, before, DayEdits.delete(before, block));
-              } catch (IllegalArgumentException error) {
-                ui.error(error.getMessage());
-              }
+              applyDayChange(
+                  selectedPath,
+                  before,
+                  () -> DayEdits.delete(before, block, CleanupRules.load(selectedStorage)));
             })
         .show();
   }
 
   private void toggleTask(DiaryTasks.Task task) {
     if (busy || document == null) return;
-    try {
-      applyDayChange(path, document, DiaryTasks.toggle(document, task, day));
-    } catch (IllegalArgumentException error) {
-      ui.error(error.getMessage());
-    }
+    Markdown before = document;
+    LocalDate selectedDay = day;
+    applyDayChange(path, before, () -> DiaryTasks.toggle(before, task, selectedDay));
   }
 
   private void loadChecklist(Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed) {

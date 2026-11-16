@@ -9,38 +9,11 @@ public final class DiaryCleanup {
 
   private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$");
 
-  private static final Set<String> MARKERS =
-      Set.of(
-          "понедельник",
-          "вторник",
-          "среда",
-          "четверг",
-          "пятница",
-          "суббота",
-          "воскресенье",
-          "вчера",
-          "и вчера",
-          "позавчера",
-          "настроение",
-          "завтрак",
-          "обед",
-          "ужин",
-          "перекус",
-          "obsidian",
-          "обсидиан",
-          "погода",
-          "машина",
-          "участок",
-          ".",
-          ",",
-          "недавно",
-          "работа",
-          "аня",
-          "вика",
-          "лена",
-          "мама");
-
   public static String compress(String text) {
+    return compress(text, CleanupRules.EMPTY);
+  }
+
+  public static String compress(String text, CleanupRules rules) {
     String newline = text.contains("\r\n") ? "\r\n" : "\n";
     boolean finalNewline = text.endsWith("\n");
     List<String> lines = new ArrayList<>(Arrays.asList(text.split("\\r?\\n", -1)));
@@ -80,7 +53,7 @@ public final class DiaryCleanup {
       String line = lines.get(i), trimmed = line.strip();
       String next = kept.isEmpty() ? "" : lines.get(kept.get(kept.size() - 1));
       if (!protectedLine[i]) {
-        if (MARKERS.contains(trimmed.toLowerCase(Locale.ROOT)) && next.isBlank()) continue;
+        if (rules.markers.contains(trimmed.toLowerCase(Locale.ROOT)) && next.isBlank()) continue;
         if (Markdown.STAMP.matcher(trimmed).matches()) {
           boolean orphan = next.isBlank();
           if (!orphan) {
