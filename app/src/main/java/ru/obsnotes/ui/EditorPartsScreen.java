@@ -7,7 +7,7 @@ import com.google.android.material.chip.ChipGroup;
 import java.util.*;
 import ru.obsnotes.*;
 
-/** Simultaneous paragraph controls; the text selection never chooses a routing panel. */
+/** All metadata stays visible; common controls act on the paragraph at the caret. */
 final class EditorPartsScreen {
   private EditorPartsScreen() {}
 
@@ -19,17 +19,18 @@ final class EditorPartsScreen {
     EditText input = ui.field(ui.body, "Текст", owner.editableText(), true, null);
     LinearLayout panels = ui.column();
     ui.body.addView(panels);
+    Routing.Catalog catalog = owner.routingCatalog(template);
     Runnable[] render = new Runnable[1];
     Runnable refresh =
         () -> {
           panels.removeAllViews();
           highlightParts(input, owner);
           if (!owner.parts.error.isEmpty()) panels.addView(ui.text(owner.parts.error, 12, Ui.RED));
+          int colorOffset = 0;
           for (int i = 0; i < owner.parts.parts.size(); i++) {
             int index = i;
             var part = owner.parts.parts.get(i);
             EditorState form = part.form();
-            var catalog = form.routingCatalog(template);
             Runnable select =
                 () -> {
                   owner.cursor = Math.max(0, input.getSelectionStart());
@@ -38,72 +39,69 @@ final class EditorPartsScreen {
                           0, Math.min(form.editableText().length(), owner.cursor - part.start()));
                   actions.part(index);
                 };
-            EditorScreen.Actions scoped = new PartActions(actions, select);
+            EditorScreen.Actions scoped = new PartActions(actions, select, () -> render[0].run());
             LinearLayout card = ui.card(panels);
-            LinearLayout row = ui.row();
-            String preview = form.editableText().strip().replace('\n', ' ');
-            if (preview.length() > 36) preview = preview.substring(0, 36) + "…";
-            TextView label = ui.text((index + 1) + " · " + preview, 13, Ui.MUTED);
-            label.setMaxLines(2);
-            ui.weighted(row, label);
-            var choose = ui.button("Разделы", scoped::sections);
-            choose.setContentDescription("Разделы части " + (index + 1));
-            row.addView(choose);
-            card.addView(row);
+            card.setContentDescription("Назначения части " + (i + 1));
             ChipGroup chips = new ChipGroup(ui.activity);
             chips.setChipSpacingHorizontal(ui.dp(4));
             chips.setChipSpacingVertical(0);
             card.addView(chips);
-            EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of());
-            if (owner.parts.linked && owner.parts.parts.size() > 1) {
-              Chip relation = EditorScreen.chip(ui, index == 0 ? "Корень" : "К части 1", Ui.MUTED);
-              relation.setCloseIconVisible(false);
+            EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of(), colorOffset, false);
+            colorOffset += LineMarks.of(form.editableText(), form.tags()).size();
+            Chip relation = EditorScreen.chip(ui, owner.parts.relationLabel(i), Ui.MUTED);
+            relation.setContentDescription("Связь части " + (i + 1));
+            relation.setCloseIconVisible(false);
+            relation.setChipIcon(
+                androidx.appcompat.content.res.AppCompatResources.getDrawable(
+                    ui.activity, ru.obsnotes.R.drawable.ic_link));
+            relation.setChipIconTint(android.content.res.ColorStateList.valueOf(Ui.MUTED));
+            relation.setChipIconVisible(true);
+            relation.setOnClickListener(
+                v -> {
+                  select.run();
+                  PartLinkPicker.show(ui, owner, index, scoped::link, scoped::routesChanged);
+                });
+            if (owner.parts.linksEnabled() || !owner.parts.relationLabel(i).equals("Связь")) {
               chips.addView(relation);
-            } else if (!Events.rootId(form.text).isEmpty()) {
-              Chip relation = EditorScreen.chip(ui, "Корень", Ui.MUTED);
-              relation.setCloseIconVisible(false);
-              relation.setOnClickListener(v -> scoped.related());
-              chips.addView(relation);
+              chips.setVisibility(android.view.View.VISIBLE);
             }
+            card.setVisibility(
+                chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
             if (form.kind == Markdown.Kind.TASK) {
-              MaterialCheckBox withText = new MaterialCheckBox(ui.activity);
-              withText.setText("С текстом");
-              withText.setTextColor(Ui.INK);
+              Chip withText = EditorScreen.chip(ui, "С текстом", Ui.INK);
+              withText.setCloseIconVisible(false);
+              withText.setCheckable(true);
               withText.setChecked(form.appendTaskText);
               withText.setOnCheckedChangeListener(
                   (v, checked) -> {
                     form.appendTaskText = checked;
                     scoped.changed();
                   });
-              card.addView(withText);
+              chips.addView(withText);
             }
           }
           if (owner.parts.parts.size() > 1) {
             MaterialCheckBox linked = new MaterialCheckBox(ui.activity);
-            linked.setText("Связать части с первой");
+            linked.setText("Связать части");
             linked.setTextColor(Ui.INK);
             linked.setMinHeight(ui.dp(48));
-            linked.setChecked(owner.parts.linked);
+            linked.setChecked(owner.parts.linksEnabled());
             linked.setOnCheckedChangeListener(
                 (v, checked) -> {
-                  owner.parts.linked = checked;
                   try {
-                    owner.parts.validate();
+                    if (checked)
+                      for (var part : owner.parts.parts)
+                        if (part.form().kind != Markdown.Kind.SECTION)
+                          throw new IllegalArgumentException(
+                              "Связи доступны для разделов, без задач и Dataview-ключей");
+                    owner.parts.linkAll(checked);
+                    actions.changed();
                   } catch (IllegalArgumentException error) {
-                    owner.parts.linked = false;
                     Toast.makeText(ui.activity, error.getMessage(), Toast.LENGTH_LONG).show();
                   }
-                  actions.changed();
                   panels.post(render[0]);
                 });
             panels.addView(linked);
-            panels.addView(
-                ui.text(
-                    owner.parts.linked
-                        ? "1 — корень; остальные — дополнения к нему."
-                        : "Пустая строка начинает новую часть. У каждой — свои разделы.",
-                    12,
-                    Ui.MUTED));
           }
         };
     render[0] = refresh;
@@ -118,23 +116,30 @@ final class EditorPartsScreen {
     input.setOnFocusChangeListener(
         (v, focus) -> owner.cursor = Math.max(0, input.getSelectionStart()));
     refresh.run();
-    LinearLayout tools = ui.row();
-    ui.weighted(
-        tools,
+    var date =
         ui.button(
-            DiaryLayout.fileName(owner.destinationPath).substring(0, 10), actions::destination));
+            RelativeDates.label(owner.destinationPath, owner.sourcePath), actions::destination);
+    date.setContentDescription("День для всех частей");
+    ui.body.addView(date, new LinearLayout.LayoutParams(-1, -2));
+    LinearLayout tools = ui.row();
     Runnable selectCaret =
         () -> {
           owner.cursor = Math.max(0, input.getSelectionStart());
-          int index = 0;
-          for (int i = 0; i < owner.parts.parts.size(); i++)
-            if (owner.parts.parts.get(i).start() <= owner.cursor) index = i;
+          int index = owner.parts.selectAt(owner.cursor);
           actions.part(index);
           var part = owner.parts.parts.get(index);
           part.form().cursor =
               Math.max(
                   0, Math.min(part.form().editableText().length(), owner.cursor - part.start()));
         };
+    ui.weighted(
+        tools,
+        ui.button(
+            "Разделы",
+            () -> {
+              selectCaret.run();
+              actions.sections();
+            }));
     ui.weighted(
         tools,
         ui.button(
@@ -171,7 +176,8 @@ final class EditorPartsScreen {
             "Связать",
             () -> {
               selectCaret.run();
-              actions.link();
+              PartLinkPicker.show(
+                  ui, owner, owner.parts.selected, actions::link, actions::routesChanged);
             }));
     ui.action(
         relations,
@@ -194,20 +200,18 @@ final class EditorPartsScreen {
     for (var span : text.getSpans(0, text.length(), android.text.style.ForegroundColorSpan.class))
       text.removeSpan(span);
     if (!owner.parts.error.isEmpty()) return;
-    for (var part : owner.parts.parts)
-      for (var mark : LineMarks.of(part.form().editableText(), part.form().tags())) {
-        int start = Math.min(text.length(), part.start() + mark.start()),
-            end = Math.min(text.length(), part.start() + mark.end());
-        if (start < end)
-          text.setSpan(
-              new android.text.style.ForegroundColorSpan(EditorScreen.lineColor(mark.colorIndex())),
-              start,
-              end,
-              android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-      }
+    for (var mark : LineMarks.of(owner.editableText(), owner.tags())) {
+      int start = Math.min(text.length(), mark.start()), end = Math.min(text.length(), mark.end());
+      if (start < end)
+        text.setSpan(
+            new android.text.style.ForegroundColorSpan(EditorScreen.lineColor(mark.colorIndex())),
+            start,
+            end,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
   }
 
-  private record PartActions(EditorScreen.Actions parent, Runnable select)
+  private record PartActions(EditorScreen.Actions parent, Runnable select, Runnable refresh)
       implements EditorScreen.Actions {
     public void part(int i) {
       parent.part(i);
@@ -224,6 +228,7 @@ final class EditorPartsScreen {
     public void changed() {
       select.run();
       parent.changed();
+      refresh.run();
     }
 
     public void sections() {

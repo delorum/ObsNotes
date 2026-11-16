@@ -406,4 +406,211 @@ public class EditorPartsTest {
     assertEquals(past.text, storage.read(PAST));
     assertTrue(journal.pending().isEmpty());
   }
+
+  @Test
+  public void chainCreatesRootAndIntermediateRootWithCorrectLeadingLinks() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linkTo(1, 0);
+    s.parts.linkTo(2, 1);
+    route(s, 0, "## Работа");
+    route(s, 1, "## Дом");
+    route(s, 2, "## Работа");
+    var m = new Markdown(saved(s));
+    var first =
+        m.blocks.stream()
+            .filter(b -> CrossReferences.clean(b.text()).equals("Alpha"))
+            .findFirst()
+            .orElseThrow();
+    var second =
+        m.blocks.stream()
+            .filter(b -> CrossReferences.clean(b.text()).equals("Beta"))
+            .findFirst()
+            .orElseThrow();
+    var third =
+        m.blocks.stream()
+            .filter(b -> CrossReferences.clean(b.text()).equals("Gamma"))
+            .findFirst()
+            .orElseThrow();
+    assertFalse(Events.rootId(first.text()).isEmpty());
+    assertFalse(Events.rootId(second.text()).isEmpty());
+    assertEquals(
+        Events.rootId(first.text()), Events.parent(PATH, second.text()).orElseThrow().id());
+    assertEquals(
+        Events.rootId(second.text()), Events.parent(PATH, third.text()).orElseThrow().id());
+    assertEquals("К части 1 · Корень", s.parts.relationLabel(1));
+    assertEquals("К части 2", s.parts.relationLabel(2));
+  }
+
+  @Test
+  public void cycleIsRejectedWithoutChangingTheOriginalGraph() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linkTo(1, 0);
+    s.parts.linkTo(2, 1);
+    var before = Map.copyOf(s.parts.links.parents);
+    assertThrows(IllegalArgumentException.class, () -> s.parts.linkTo(0, 2));
+    assertEquals(before, s.parts.links.parents);
+    assertThrows(IllegalArgumentException.class, () -> s.parts.linkTo(1, 1));
+    assertEquals(before, s.parts.links.parents);
+  }
+
+  @Test
+  public void linksFollowIdentitiesWhenANewPartIsInsertedBeforeTheParent() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linkTo(1, 0);
+    s.parts.linkTo(2, 1);
+    String parent = s.parts.parts.get(1).form().partId, child = s.parts.parts.get(2).form().partId;
+    s.edit("Alpha\n\nInserted\n\nBeta\n\nGamma");
+    assertEquals("", s.parts.error);
+    assertEquals(4, s.parts.parts.size());
+    assertEquals(parent, s.parts.parts.get(2).form().partId);
+    assertEquals(child, s.parts.parts.get(3).form().partId);
+    assertEquals(parent, s.parts.links.parents.get(child));
+    assertEquals("К части 3", s.parts.relationLabel(3));
+  }
+
+  @Test
+  public void deletingConnectedPartKeepsItsEdgesAndCanBeUndone() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linkTo(1, 0);
+    s.parts.linkTo(2, 1);
+    var before = Map.copyOf(s.parts.links.parents);
+    s.edit("Alpha\n\nGamma");
+    assertFalse(s.parts.error.isEmpty());
+    assertEquals(before, s.parts.links.parents);
+    assertThrows(IllegalArgumentException.class, () -> saved(s));
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    assertEquals("", s.parts.error);
+    assertEquals(before, s.parts.links.parents);
+  }
+
+  @Test
+  public void rootPromotionAndReparentingDoNotKeepUnrequestedIntermediateRoots() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linked = true;
+    s.parts.linkTo(2, 1);
+    assertTrue(s.parts.links.configured);
+    assertEquals("К части 2", s.parts.relationLabel(2));
+    s.parts.linkTo(2, 0);
+    var m = new Markdown(saved(s));
+    assertEquals(1, m.blocks.stream().filter(b -> !Events.rootId(b.text()).isEmpty()).count());
+    s.parts.makeRoot(1);
+    s.parts.linkTo(2, 1);
+    s.parts.independent(0);
+    assertEquals("Корень", s.parts.relationLabel(1));
+    assertEquals("Связь", s.parts.relationLabel(0));
+    assertEquals(
+        1,
+        new Markdown(saved(s))
+            .blocks.stream().filter(b -> !Events.rootId(b.text()).isEmpty()).count());
+  }
+
+  @Test
+  public void commonControlsSelectThePartAndRelativeCursorWithoutMovingIt() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    assertEquals(0, s.parts.selectAt(1));
+    assertEquals(1, s.parts.selectAt(8));
+    assertEquals(2, s.parts.selectAt(s.editableText().length()));
+    s.cursor = 8;
+    s.parts.selectAt(s.cursor);
+    route(s, s.parts.selected, "## Работа", "## Дом");
+    assertEquals(8, s.cursor);
+    assertEquals("## Работа", s.parts.parts.get(1).form().heading);
+    assertEquals("## Заметки", s.parts.parts.get(0).form().heading);
+  }
+
+  @Test
+  public void lineColorIndicesAreUniqueAcrossAllPartsAndSharedWithinOneLine() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    for (var part : s.parts.parts) part.form().addTags(0, List.of("Work"), true, false);
+    s.parts.parts.get(1).form().addTags(0, List.of("Beta"), true, true);
+    s.parts.sync();
+    var marks = LineMarks.of(s.editableText(), s.tags());
+    assertEquals(List.of(0, 1, 2), marks.stream().map(LineMarks.Mark::colorIndex).toList());
+    assertEquals(
+        3, marks.stream().map(mark -> LineColors.argb(mark.colorIndex())).distinct().count());
+    assertEquals("Beta", s.editableText().substring(marks.get(1).start(), marks.get(1).end()));
+  }
+
+  @Test
+  public void dateChoiceMovesEveryPartToExistingFutureSnapshotAndKeepsItsGraph() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linkTo(1, 0);
+    s.parts.linkTo(2, 1);
+    String future = DiaryLayout.path(DATE.plusDays(5));
+    s.chooseDay(future, TEMPLATE.text);
+    for (var part : s.parts.parts) {
+      part.form().initializeRoutes(TEMPLATE);
+      assertEquals(future, part.form().destinationPath);
+    }
+    var changes = plan(s, TEMPLATE);
+    assertEquals(future, changes.get(0).path());
+    assertEquals(PATH, changes.get(1).path());
+    var m = new Markdown(changes.get(0).after());
+    assertEquals(
+        2, m.blocks.stream().filter(b -> Events.parent(future, b.text()).isPresent()).count());
+    assertFalse(changes.get(1).after().contains("Alpha"));
+  }
+
+  @Test
+  public void timestampNeverDisplacesALeadingEventParentLink() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    s.parts.linkTo(1, 0);
+    s.parts.linkTo(2, 1);
+    route(s, 0, "## Работа");
+    var m = new Markdown(saved(s));
+    assertEquals(
+        2, m.blocks.stream().filter(b -> Events.parent(PATH, b.text()).isPresent()).count());
+    assertTrue(m.text.contains(DATE + " 12:00:00"));
+  }
+
+  @Test
+  public void rejectedLegacyStarCycleDoesNotChangeToggleOrRecoveryMode() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta");
+    s.parts.linked = true;
+    var before = Map.copyOf(s.parts.effectiveLinks().parents);
+    assertThrows(IllegalArgumentException.class, () -> s.parts.linkTo(0, 1));
+    assertFalse(s.parts.links.configured);
+    assertTrue(s.parts.linked);
+    assertEquals(before, s.parts.effectiveLinks().parents);
+  }
+
+  @Test
+  public void insertingBeforeFirstPartPreservesItsExistingIdentityAndChildren() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta");
+    s.parts.linkTo(1, 0);
+    String root = s.parts.parts.get(0).form().partId, child = s.parts.parts.get(1).form().partId;
+    s.edit("Inserted\n\nAlpha\n\nBeta");
+    assertEquals("", s.parts.error);
+    assertEquals(root, s.parts.parts.get(1).form().partId);
+    assertEquals(child, s.parts.parts.get(2).form().partId);
+    assertNotEquals(root, s.parts.parts.get(0).form().partId);
+    assertEquals("К части 2", s.parts.relationLabel(2));
+  }
+
+  @Test
+  public void customChainKeepsLinkCheckboxEnabledAndCanBeDisabledTogether() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    assertFalse(s.parts.linksEnabled());
+    s.parts.linkAll(true);
+    assertTrue(s.parts.linksEnabled());
+    s.parts.linkTo(2, 1);
+    assertTrue(s.parts.linksEnabled());
+    assertEquals("К части 2", s.parts.relationLabel(2));
+    s.parts.linkAll(false);
+    assertFalse(s.parts.linksEnabled());
+    assertTrue(s.parts.effectiveLinks().parents.isEmpty());
+    assertEquals("Связь", s.parts.relationLabel(0));
+  }
 }

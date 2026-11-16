@@ -150,7 +150,7 @@ public final class EditorScreen {
     ui.weighted(
         dates,
         ui.button(
-            DiaryLayout.fileName(state.destinationPath).substring(0, 10), actions::destination));
+            RelativeDates.label(state.destinationPath, state.sourcePath), actions::destination));
     if (state.kind == Markdown.Kind.TASK && !state.taskAppend) {
       MaterialCheckBox text = new MaterialCheckBox(ui.activity);
       text.setText("С текстом");
@@ -261,6 +261,18 @@ public final class EditorScreen {
       ChipGroup group,
       Actions actions,
       List<EditText> edits) {
+    metadata(ui, state, catalog, group, actions, edits, 0, true);
+  }
+
+  static void metadata(
+      Ui ui,
+      EditorState state,
+      Routing.Catalog catalog,
+      ChipGroup group,
+      Actions actions,
+      List<EditText> edits,
+      int colorOffset,
+      boolean rootChip) {
     highlight(edits, state);
     group.removeAllViews();
     for (int i = 0; i < state.routes.size(); i++) {
@@ -293,7 +305,8 @@ public final class EditorScreen {
       if (label.isEmpty()) continue;
       int color = Ui.ACCENT;
       for (var mark : LineMarks.of(clean, tags))
-        if (tag.oneLine() && mark.line() == tag.line(clean)) color = lineColor(mark.colorIndex());
+        if (tag.oneLine() && mark.line() == tag.line(clean))
+          color = lineColor(colorOffset + mark.colorIndex());
       Chip chip = chip(ui, label, color);
       chip.setContentDescription(
           label + (tag.oneLine() ? ", строка " + tag.line(clean) : ", весь блок"));
@@ -306,19 +319,19 @@ public final class EditorScreen {
           v -> {
             state.removeUnmanagedTag(index, catalog);
             actions.changed();
-            metadata(ui, state, catalog, group, actions, edits);
+            metadata(ui, state, catalog, group, actions, edits, colorOffset, rootChip);
           });
       group.addView(chip);
     }
     String root = state.rootLinkLabel();
-    if (!root.isEmpty()) {
+    if (rootChip && !root.isEmpty()) {
       Chip chip = chip(ui, "К корню: " + root, Ui.ACCENT);
       chip.setOnClickListener(v -> actions.link());
       chip.setOnCloseIconClickListener(
           v -> {
             state.removeRootLink();
             actions.changed();
-            metadata(ui, state, catalog, group, actions, edits);
+            metadata(ui, state, catalog, group, actions, edits, colorOffset, rootChip);
           });
       group.addView(chip);
     }
@@ -326,12 +339,8 @@ public final class EditorScreen {
         group.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
   }
 
-  private static final int[] LINE_COLORS = {
-    Ui.GREEN, 0xffe8be63, 0xff7cb4ed, 0xffef9ba5, 0xff6bcfc3, 0xffe6a66c
-  };
-
   static int lineColor(int index) {
-    return LINE_COLORS[index % LINE_COLORS.length];
+    return LineColors.argb(index);
   }
 
   private static void highlight(List<EditText> edits, EditorState state) {

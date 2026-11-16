@@ -37,6 +37,7 @@ public final class EditorRecovery {
   private JSONObject encode(EditorState s) throws JSONException {
     JSONObject j = new JSONObject();
 
+    j.put("partId", s.partId);
     j.put("sourcePath", s.sourcePath);
     j.put("destinationPath", s.destinationPath);
     j.put("original", s.original);
@@ -80,6 +81,11 @@ public final class EditorRecovery {
       split.put("value", s.parts.value);
       split.put("baseline", s.parts.baseline);
       split.put("linked", s.parts.linked);
+      JSONObject links = new JSONObject();
+      links.put("configured", s.parts.links.configured);
+      links.put("parents", new JSONObject(s.parts.links.parents));
+      links.put("roots", new JSONArray(s.parts.links.roots));
+      split.put("links", links);
       split.put("selected", s.parts.selected);
       split.put("error", s.parts.error);
       JSONArray items = new JSONArray();
@@ -97,6 +103,7 @@ public final class EditorRecovery {
 
   private EditorState decode(JSONObject j) throws JSONException {
     EditorState s = new EditorState();
+    s.partId = j.optString("partId", s.partId);
     s.sourcePath = j.getString("sourcePath");
     s.destinationPath = j.getString("destinationPath");
     s.original = j.getString("original");
@@ -153,6 +160,17 @@ public final class EditorRecovery {
       s.parts.baseline = split.getString("baseline");
       s.parts.error = split.optString("error");
       s.parts.linked = split.optBoolean("linked");
+      JSONObject links = split.optJSONObject("links");
+      if (links != null) {
+        s.parts.links.configured = links.optBoolean("configured");
+        JSONObject parents = links.getJSONObject("parents");
+        for (var keys = parents.keys(); keys.hasNext(); ) {
+          String child = keys.next();
+          s.parts.links.parents.put(child, parents.getString(child));
+        }
+        JSONArray roots = links.getJSONArray("roots");
+        for (int i = 0; i < roots.length(); i++) s.parts.links.roots.add(roots.getString(i));
+      }
       s.parts.selected = split.optInt("selected");
     }
     return s;

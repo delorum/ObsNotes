@@ -558,7 +558,8 @@ public final class MainActivity extends AppCompatActivity {
           public void root() {
             if (!busy) {
               try {
-                editor.activePart().text = Events.root(editor.activePart().text);
+                if (editor.parts != null) editor.parts.makeRoot(editor.parts.selected);
+                else editor.text = Events.root(editor.text);
                 recovery.save(editor, vault);
                 showEditor();
               } catch (IllegalArgumentException e) {
@@ -722,8 +723,19 @@ public final class MainActivity extends AppCompatActivity {
                 }),
         selected ->
             work(
-                () -> index.day(storage, selected.date()),
+                () -> {
+                  try {
+                    return index.day(storage, selected.date());
+                  } catch (java.io.FileNotFoundException absent) {
+                    return null;
+                  }
+                },
                 loaded -> {
+                  if (loaded == null) {
+                    lastError = "Заметка не найдена";
+                    ui.error(lastError);
+                    return;
+                  }
                   editor.chooseDay(loaded.path(), loaded.document().text);
                   recovery.save(editor, vault);
                   showEditor();
@@ -773,7 +785,9 @@ public final class MainActivity extends AppCompatActivity {
                 false,
                 selected -> {
                   try {
-                    editor.activePart().attach(selected.get(0));
+                    if (editor.parts != null)
+                      editor.parts.attachExternal(editor.parts.selected, selected.get(0));
+                    else editor.attach(selected.get(0));
                   } catch (IllegalArgumentException e) {
                     ui.error(e.getMessage());
                     return;

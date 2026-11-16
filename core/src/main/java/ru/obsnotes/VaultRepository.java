@@ -160,8 +160,15 @@ public final class VaultRepository {
               target.source(),
               target.kind());
     String payload = text;
-    if (state.fresh && state.heading.equals("## Заметки") && state.kind == Markdown.Kind.SECTION)
-      payload = to.timestamp(now) + text;
+    if (state.fresh && state.heading.equals("## Заметки") && state.kind == Markdown.Kind.SECTION) {
+      String stamp = to.timestamp(now);
+      int firstLine = text.indexOf('\n');
+      // Parent wiki-links must remain the first line for Obsidian's event scripts.
+      payload =
+          firstLine >= 0 && Events.parent(state.destinationPath, text).isPresent()
+              ? text.substring(0, firstLine + 1) + stamp + text.substring(firstLine + 1)
+              : stamp + text;
+    }
     if (state.heading.equals("## Сделано сегодня (или отмечено сделанным сегодня)")
         && state.kind == Markdown.Kind.SECTION)
       payload =

@@ -31,7 +31,8 @@ public class EditorTest {
     assertEquals("past", s.destinationSnapshot);
     s.chooseDay(s.sourcePath, "new external version");
     assertEquals("original", s.destinationSnapshot);
-    assertThrows(IllegalArgumentException.class, () -> s.chooseDay("2026-11-16-пн.md", "future"));
+    s.chooseDay("2026-11-16-пн.md", "future existing file");
+    assertEquals("future existing file", s.destinationSnapshot);
   }
 
   @Test

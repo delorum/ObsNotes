@@ -10,7 +10,8 @@ public final class EditorParts {
   public final List<Part> parts = new ArrayList<>();
   public String value, baseline, error = "";
   public Markdown template = new Markdown("");
-  public boolean linked;
+  public boolean linked; // Compatibility with earlier recovery snapshots and star-link toggle.
+  public final PartLinks links = new PartLinks();
   public int selected;
 
   public EditorParts(EditorState owner) {
@@ -56,24 +57,30 @@ public final class EditorParts {
     int oldEnd = baseline.length() - suffix, newEnd = next.length() - suffix;
     final int p = prefix, o = oldEnd, n = newEnd;
     java.util.function.IntUnaryOperator map = at -> at <= p ? at : at >= o ? at + n - o : p;
+    java.util.function.IntUnaryOperator mapStart = at -> at < p ? at : at >= o ? at + n - o : p;
     List<Part> result = new ArrayList<>();
     Set<EditorState> used = Collections.newSetFromMap(new IdentityHashMap<>());
     try {
       for (int[] range : ranges(next)) {
         List<Part> contributors = new ArrayList<>();
         for (Part old : parts) {
-          int a = map.applyAsInt(old.start()), b = map.applyAsInt(old.end());
+          int a = mapStart.applyAsInt(old.start()), b = map.applyAsInt(old.end());
           if (Math.max(a, range[0]) < Math.min(b, range[1])) contributors.add(old);
         }
+        boolean inferred = contributors.isEmpty();
         if (contributors.isEmpty()) {
           Part closest = parts.get(0);
-          for (Part old : parts) if (map.applyAsInt(old.start()) <= range[0]) closest = old;
+          for (Part old : parts) if (mapStart.applyAsInt(old.start()) <= range[0]) closest = old;
           contributors.add(closest);
         }
         Part origin = contributors.get(0);
         EditorState form = origin.form().copy();
-        boolean first = used.add(origin.form());
-        if (!first) form.clearEventMetadata();
+        boolean mappedContent = map.applyAsInt(origin.end()) > mapStart.applyAsInt(origin.start());
+        boolean first = (!inferred || !mappedContent) && used.add(origin.form());
+        if (!first) {
+          form.clearEventMetadata();
+          form.partId = UUID.randomUUID().toString();
+        }
         // Block-level destinations follow a split. Per-line/person tags follow their characters.
         List<TaggedText.Tag> tags = new ArrayList<>();
         List<Routing.Choice> routes = new ArrayList<>(form.routes);
@@ -118,6 +125,9 @@ public final class EditorParts {
           throw new IllegalArgumentException(
               "Часть с якорем нельзя удалить. Верните её текст или пустую строку.");
       }
+      Set<String> ids = new HashSet<>();
+      for (Part part : result) ids.add(part.form().partId);
+      if (links.configured) links.validate(ids);
       parts.clear();
       parts.addAll(result);
       baseline = next;
@@ -159,27 +169,136 @@ public final class EditorParts {
     return tags;
   }
 
+  public int selectAt(int cursor) {
+    selected = 0;
+    for (int i = 0; i < parts.size(); i++) if (parts.get(i).start() <= cursor) selected = i;
+    return selected;
+  }
+
+  public PartLinks effectiveLinks() {
+    if (links.configured) return links;
+    PartLinks result = new PartLinks();
+    if (linked && parts.size() > 1) {
+      String first = parts.get(0).form().partId;
+      result.root(first);
+      for (int i = 1; i < parts.size(); i++) result.parent(parts.get(i).form().partId, first);
+    }
+    return result;
+  }
+
+  private void configureLinks() {
+    if (links.configured) return;
+    PartLinks current = effectiveLinks();
+    links.parents.putAll(current.parents);
+    links.roots.addAll(current.roots);
+    links.configured = true;
+  }
+
+  public void linkTo(int child, int parent) {
+    EditorState childForm = parts.get(child).form(), parentForm = parts.get(parent).form();
+    if (childForm.kind != Markdown.Kind.SECTION || parentForm.kind != Markdown.Kind.SECTION)
+      throw new IllegalArgumentException(
+          "Связи доступны для разделов, без задач и Dataview-ключей");
+    PartLinks candidate = effectiveLinks();
+    candidate.parent(childForm.partId, parentForm.partId);
+    if (candidate != links) {
+      links.parents.clear();
+      links.parents.putAll(candidate.parents);
+      links.roots.clear();
+      links.roots.addAll(candidate.roots);
+      links.configured = true;
+    }
+    childForm.removeRootLink();
+  }
+
+  public void makeRoot(int index) {
+    EditorState form = parts.get(index).form();
+    if (form.kind != Markdown.Kind.SECTION)
+      throw new IllegalArgumentException("Корень должен находиться в разделе");
+    configureLinks();
+    links.root(form.partId);
+    form.removeRootLink();
+  }
+
+  public void attachExternal(int index, Events.Root root) {
+    EditorState form = parts.get(index).form();
+    form.attach(root);
+    configureLinks();
+    links.independent(form.partId);
+  }
+
+  public void independent(int index) {
+    configureLinks();
+    EditorState form = parts.get(index).form();
+    links.independent(form.partId);
+    form.removeRootLink();
+  }
+
+  public boolean linksEnabled() {
+    return linked || !effectiveLinks().rootIds().isEmpty();
+  }
+
+  public void linkAll(boolean enabled) {
+    linked = enabled;
+    if (enabled) for (int i = 1; i < parts.size(); i++) parts.get(i).form().removeRootLink();
+    links.configured = false;
+    links.parents.clear();
+    links.roots.clear();
+  }
+
+  public String relationLabel(int index) {
+    String id = parts.get(index).form().partId;
+    PartLinks graph = effectiveLinks();
+    String parent = graph.parents.get(id);
+    boolean root =
+        graph.rootIds().contains(id) || !Events.rootId(parts.get(index).form().text).isEmpty();
+    if (parent != null) {
+      for (int i = 0; i < parts.size(); i++)
+        if (parts.get(i).form().partId.equals(parent))
+          return "К части " + (i + 1) + (root ? " · Корень" : "");
+    }
+    String external = parts.get(index).form().rootLinkLabel();
+    if (!external.isEmpty()) return "К корню: " + external + (root ? " · Корень" : "");
+    return root ? "Корень" : "Связь";
+  }
+
   public String validateRoutes(EditorState form, List<Routing.Choice> choices) {
-    if (linked
-        && parts.size() > 1
+    if (effectiveLinks().involved(form.partId)
         && !choices.isEmpty()
         && choices.get(0).target().kind() != Markdown.Kind.SECTION)
-      return "Сначала отключите связь частей: задачи и Dataview-ключи не могут быть корнями или"
-                 + " дополнениями.";
+      return "Сначала уберите связь этой части: задачи и Dataview-ключи не поддерживают связи";
     return form.validateRoutes(choices);
   }
 
   public void validate() {
     if (!error.isEmpty()) throw new IllegalArgumentException(error);
-    if (!linked || parts.size() < 2) return;
+    PartLinks graph = effectiveLinks();
+    Set<String> ids = new HashSet<>();
+    for (Part part : parts) ids.add(part.form().partId);
+    graph.validate(ids);
     for (Part part : parts)
-      if (part.form().kind != Markdown.Kind.SECTION)
+      if (graph.involved(part.form().partId) && part.form().kind != Markdown.Kind.SECTION)
         throw new IllegalArgumentException(
-            "Связать части можно при переносе в разделы, без задач и Dataview-ключей.");
-    for (int i = 1; i < parts.size(); i++)
-      if (!parts.get(i).form().rootLinkLabel().isEmpty())
-        throw new IllegalArgumentException(
-            "У нижней части уже есть корень. Уберите эту связь перед связыванием частей.");
+            "Связи доступны для разделов, без задач и Dataview-ключей");
+  }
+
+  private List<EditorState> savedForms() {
+    List<EditorState> forms = parts.stream().map(p -> p.form().copy()).toList();
+    PartLinks graph = effectiveLinks();
+    Map<String, Events.Root> roots = new HashMap<>();
+    for (EditorState form : forms)
+      if (graph.rootIds().contains(form.partId)) {
+        form.text = Events.root(form.text);
+        var doc = new Markdown(form.heading + "\n" + form.text + "\n");
+        roots.put(
+            form.partId,
+            new Events.Root(form.destinationPath, doc.blocks.get(0), Events.rootId(form.text)));
+      }
+    for (EditorState form : forms) {
+      String parent = graph.parents.get(form.partId);
+      if (parent != null) form.text = Events.link(form.text, roots.get(parent));
+    }
+    return forms;
   }
 
   public List<VaultRepository.Change> plan(
@@ -191,9 +310,11 @@ public final class EditorParts {
       LocalDateTime now,
       CleanupRules rules) {
     validate();
+    List<EditorState> forms = savedForms();
+    boolean internalEvents = !effectiveLinks().rootIds().isEmpty();
     // A single part retains the existing in-place edit and protected-anchor semantics.
-    if (parts.size() == 1) {
-      EditorState form = parts.get(0).form().copy();
+    if (parts.size() == 1 && !(internalEvents && !owner.sourcePath.equals(owner.destinationPath))) {
+      EditorState form = forms.get(0);
       form.edit(value);
       return VaultRepository.plan(form, source, destination, template, date, now, rules);
     }
@@ -203,16 +324,6 @@ public final class EditorParts {
     before.put(owner.sourcePath, source.text);
     after.putAll(before);
 
-    List<EditorState> forms = parts.stream().map(part -> part.form().copy()).toList();
-    if (linked) {
-      EditorState first = forms.get(0);
-      first.text = Events.root(first.text);
-      var rootDoc = new Markdown(first.heading + "\n" + first.text + "\n");
-      var root =
-          new Events.Root(owner.destinationPath, rootDoc.blocks.get(0), Events.rootId(first.text));
-      for (int i = 1; i < forms.size(); i++)
-        forms.get(i).text = Events.link(forms.get(i).text, root);
-    }
     if (!owner.fresh
         && owner.sourcePath.equals(owner.destinationPath)
         && forms.stream()
@@ -230,7 +341,7 @@ public final class EditorParts {
       for (EditorState form : forms) changes = VaultRepository.addRoot(changes, form);
       return changes;
     }
-    boolean relocatedGroup = linked && !owner.sourcePath.equals(owner.destinationPath);
+    boolean relocatedGroup = internalEvents && !owner.sourcePath.equals(owner.destinationPath);
     if (relocatedGroup && !owner.fresh) {
       if (!Events.id(owner.original).isEmpty() || owner.original.contains("[[#^"))
         throw new IllegalArgumentException(

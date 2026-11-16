@@ -23,6 +23,7 @@ public final class EditorState {
   public String fallbackHeading = "";
   public List<Routing.Choice> routes = List.of();
 
+  public String partId = UUID.randomUUID().toString();
   public EditorParts parts;
 
   public void enableParts(Markdown template) {
@@ -40,6 +41,7 @@ public final class EditorState {
   /** Copy a paragraph form without recursively copying the shared editor. */
   public EditorState copy() {
     EditorState s = new EditorState();
+    s.partId = partId;
     s.sourcePath = sourcePath;
     s.original = original;
     s.text = text;
@@ -212,11 +214,6 @@ public final class EditorState {
     if (parts != null) {
       for (var part : parts.parts) part.form().chooseDay(path, snapshot);
     }
-    if (!path.equals(sourcePath)
-        && DiaryLayout.fileName(path)
-                .substring(0, 10)
-                .compareTo(DiaryLayout.fileName(sourcePath).substring(0, 10))
-            >= 0) throw new IllegalArgumentException("Выберите существующий прошлый день");
     destinationPath = path;
     destinationSnapshot = path.equals(sourcePath) ? sourceSnapshot : snapshot;
     kind = Markdown.Kind.SECTION;

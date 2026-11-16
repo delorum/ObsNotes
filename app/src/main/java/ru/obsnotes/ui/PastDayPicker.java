@@ -4,10 +4,10 @@ import android.view.*;
 import android.widget.*;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.time.*;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Consumer;
 import ru.obsnotes.PastDays;
+import ru.obsnotes.RelativeDates;
 
 public final class PastDayPicker {
   private PastDayPicker() {}
@@ -16,7 +16,7 @@ public final class PastDayPicker {
     void load(LocalDate from, Consumer<PastDays.Page> loaded, Consumer<String> failed);
   }
 
-  public static void show(Ui ui, LocalDate start, Loader loader, Consumer<PastDays.Day> selected) {
+  public static void show(Ui ui, LocalDate origin, Loader loader, Consumer<PastDays.Day> selected) {
     List<PastDays.Day> days = new ArrayList<>();
     ListView list = new ListView(ui.activity);
     list.setDivider(null);
@@ -43,12 +43,7 @@ public final class PastDayPicker {
             LinearLayout row = ui.row();
             row.setPadding(ui.dp(16), ui.dp(5), ui.dp(16), ui.dp(5));
             row.setMinimumHeight(ui.dp(56));
-            TextView date =
-                ui.bold(
-                    day.date()
-                        .format(DateTimeFormatter.ofPattern("dd.MM.yy · EEE", new Locale("ru"))),
-                    14,
-                    Ui.INK);
+            TextView date = ui.bold(RelativeDates.label(day.date(), origin), 14, Ui.INK);
             row.addView(date);
             TextView description =
                 ui.text(
@@ -62,12 +57,31 @@ public final class PastDayPicker {
           }
         };
     list.setAdapter(adapter);
-    var dialog =
-        new MaterialAlertDialogBuilder(ui.activity)
-            .setTitle("Перенести в другой день")
-            .setView(list)
-            .create();
-    LocalDate[] next = {start};
+    LinearLayout content = ui.column(), header = ui.row();
+    header.setPadding(ui.dp(16), ui.dp(8), ui.dp(16), 0);
+    ui.weighted(header, ui.bold("Перенести в другой день", 20, Ui.INK));
+    content.addView(header);
+    content.addView(list);
+    var dialog = new MaterialAlertDialogBuilder(ui.activity).setView(content).create();
+    ui.action(
+        header,
+        ru.obsnotes.R.drawable.ic_today,
+        "Выбрать дату",
+        () -> {
+          new android.app.DatePickerDialog(
+                  ui.activity,
+                  (v, y, m, d) -> {
+                    LocalDate chosen = LocalDate.of(y, m + 1, d);
+                    dialog.dismiss();
+                    selected.accept(
+                        new PastDays.Day(chosen, ru.obsnotes.DiaryLayout.path(chosen), ""));
+                  },
+                  origin.getYear(),
+                  origin.getMonthValue() - 1,
+                  origin.getDayOfMonth())
+              .show();
+        });
+    LocalDate[] next = {origin.plusDays(2)};
     boolean[] loading = {false};
     boolean[] scrolling = {false};
     boolean[] autoLoad = {true};
