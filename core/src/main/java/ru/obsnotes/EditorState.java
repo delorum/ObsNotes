@@ -23,6 +23,7 @@ public final class EditorState {
   public String fallbackHeading = "";
   public List<Routing.Choice> routes = List.of();
 
+  public String initialRevision = "";
   public String partId = UUID.randomUUID().toString();
   public EditorParts parts;
 
@@ -31,6 +32,7 @@ public final class EditorState {
     if (parts != null) {
       parts.template = template;
       parts.sync();
+      parts.migrateLegacyLinks();
     }
   }
 
@@ -95,6 +97,7 @@ public final class EditorState {
     EditorState state = at(path, source, heading);
     state.routeChosen = !heading.equals("## Заметки");
     state.initializeRoutes(template);
+    EditorRevision.remember(state, template);
     return state;
   }
 
@@ -109,6 +112,7 @@ public final class EditorState {
     state.end = block.end();
     state.initializeRoutes(template);
     state.cursor = state.editableText().length();
+    EditorRevision.remember(state, template);
     return state;
   }
 
@@ -133,6 +137,7 @@ public final class EditorState {
     state.taskAppend = true;
     state.routeChosen = true;
     state.initializeRoutes(template);
+    EditorRevision.remember(state, template);
     return state;
   }
 

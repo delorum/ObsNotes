@@ -76,6 +76,7 @@ public final class CrossReferences {
     Matcher block =
         Pattern.compile("\\s+\\^[A-Za-z0-9_-]+$").matcher(text.substring(lineStart, at));
     if (block.find()) at = lineStart + block.start();
+    else while (at > lineStart && (text.charAt(at - 1) == ' ' || text.charAt(at - 1) == '\t')) at--;
     return text.substring(0, at) + suffix + text.substring(at);
   }
 

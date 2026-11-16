@@ -169,10 +169,14 @@ public final class EditorParts {
     return tags;
   }
 
+  public int partAt(int cursor) {
+    int index = 0;
+    for (int i = 0; i < parts.size(); i++) if (parts.get(i).start() <= cursor) index = i;
+    return index;
+  }
+
   public int selectAt(int cursor) {
-    selected = 0;
-    for (int i = 0; i < parts.size(); i++) if (parts.get(i).start() <= cursor) selected = i;
-    return selected;
+    return selected = partAt(cursor);
   }
 
   public PartLinks effectiveLinks() {
@@ -236,6 +240,13 @@ public final class EditorParts {
 
   public boolean linksEnabled() {
     return linked || !effectiveLinks().rootIds().isEmpty();
+  }
+
+  /** Freeze the old checkbox's star as explicit edges; new parts stay independent. */
+  public void migrateLegacyLinks() {
+    if (!linked) return;
+    configureLinks();
+    linked = false;
   }
 
   public void linkAll(boolean enabled) {

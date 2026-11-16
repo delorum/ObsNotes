@@ -1,7 +1,6 @@
 package ru.obsnotes.ui;
 
 import android.widget.*;
-import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import java.util.*;
@@ -20,10 +19,24 @@ final class EditorPartsScreen {
     LinearLayout panels = ui.column();
     ui.body.addView(panels);
     Routing.Catalog catalog = owner.routingCatalog(template);
+    List<LinearLayout> cards = new ArrayList<>();
     Runnable[] render = new Runnable[1];
+    Runnable updateActive =
+        () -> {
+          int at = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
+          for (int i = 0; i < cards.size(); i++) {
+            boolean active = cards.size() > 1 && i == at;
+            LinearLayout card = cards.get(i);
+            card.setSelected(active);
+            var background = ui.background(Ui.CARD, 14);
+            if (active) background.setStroke(ui.dp(1), Ui.INK);
+            card.setBackground(background);
+          }
+        };
     Runnable refresh =
         () -> {
           panels.removeAllViews();
+          cards.clear();
           highlightParts(input, owner);
           if (!owner.parts.error.isEmpty()) panels.addView(ui.text(owner.parts.error, 12, Ui.RED));
           int colorOffset = 0;
@@ -41,6 +54,7 @@ final class EditorPartsScreen {
                 };
             EditorScreen.Actions scoped = new PartActions(actions, select, () -> render[0].run());
             LinearLayout card = ui.card(panels);
+            cards.add(card);
             card.setContentDescription("Назначения части " + (i + 1));
             ChipGroup chips = new ChipGroup(ui.activity);
             chips.setChipSpacingHorizontal(ui.dp(4));
@@ -61,7 +75,7 @@ final class EditorPartsScreen {
                   select.run();
                   PartLinkPicker.show(ui, owner, index, scoped::link, scoped::routesChanged);
                 });
-            if (owner.parts.linksEnabled() || !owner.parts.relationLabel(i).equals("Связь")) {
+            if (!owner.parts.relationLabel(i).equals("Связь")) {
               chips.addView(relation);
               chips.setVisibility(android.view.View.VISIBLE);
             }
@@ -80,29 +94,7 @@ final class EditorPartsScreen {
               chips.addView(withText);
             }
           }
-          if (owner.parts.parts.size() > 1) {
-            MaterialCheckBox linked = new MaterialCheckBox(ui.activity);
-            linked.setText("Связать части");
-            linked.setTextColor(Ui.INK);
-            linked.setMinHeight(ui.dp(48));
-            linked.setChecked(owner.parts.linksEnabled());
-            linked.setOnCheckedChangeListener(
-                (v, checked) -> {
-                  try {
-                    if (checked)
-                      for (var part : owner.parts.parts)
-                        if (part.form().kind != Markdown.Kind.SECTION)
-                          throw new IllegalArgumentException(
-                              "Связи доступны для разделов, без задач и Dataview-ключей");
-                    owner.parts.linkAll(checked);
-                    actions.changed();
-                  } catch (IllegalArgumentException error) {
-                    Toast.makeText(ui.activity, error.getMessage(), Toast.LENGTH_LONG).show();
-                  }
-                  panels.post(render[0]);
-                });
-            panels.addView(linked);
-          }
+          updateActive.run();
         };
     render[0] = refresh;
     ui.watch(
@@ -112,6 +104,12 @@ final class EditorPartsScreen {
           owner.cursor = Math.max(0, input.getSelectionStart());
           actions.changed();
           refresh.run();
+        });
+    ui.watchSelection(
+        input,
+        at -> {
+          owner.cursor = at;
+          updateActive.run();
         });
     input.setOnFocusChangeListener(
         (v, focus) -> owner.cursor = Math.max(0, input.getSelectionStart()));

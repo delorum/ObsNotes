@@ -213,7 +213,7 @@ public final class Ui {
     box.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_OUTLINE);
     box.setBoxCornerRadii(dp(14), dp(14), dp(14), dp(14));
     box.setDefaultHintTextColor(ColorStateList.valueOf(MUTED));
-    TextInputEditText edit = new TextInputEditText(box.getContext());
+    CursorEditText edit = new CursorEditText(box.getContext());
     edit.setTextColor(INK);
     edit.setTextSize(17);
     edit.setPadding(dp(16), dp(16), dp(16), dp(16));
@@ -253,6 +253,10 @@ public final class Ui {
     layout.bottomMargin = dp(8);
     parent.addView(row, layout);
     return search;
+  }
+
+  public void watchSelection(EditText field, java.util.function.IntConsumer callback) {
+    ((CursorEditText) field).watchSelection(callback);
   }
 
   public void watch(EditText field, Consumer<String> callback) {

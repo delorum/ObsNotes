@@ -146,6 +146,9 @@ public final class TaggedText {
             Pattern.compile("(?:^|[ \\t]+)\\^[A-Za-z0-9_-]+[ \\t]*$")
                 .matcher(clean.substring(start, end));
         if (anchor.find()) end = start + anchor.start();
+        else
+          while (end > start && (clean.charAt(end - 1) == ' ' || clean.charAt(end - 1) == '\t'))
+            end--;
         String suffix = end < clean.length() && clean.charAt(end) == '^' ? " " : "";
         inserts.add(new Insertion(end, i, " #" + t.kind + "/" + t.ids + suffix));
       }

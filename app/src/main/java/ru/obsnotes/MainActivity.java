@@ -900,7 +900,7 @@ public final class MainActivity extends AppCompatActivity {
     if (busy || editor == null) return;
     stopWeatherInEditor();
     cancelNavigation();
-    recovery.save(editor, vault);
+    if (editor.parts != null) editor.parts.sync();
     EditorState form = editor;
     int returnY =
         form.taskAppend
@@ -909,6 +909,18 @@ public final class MainActivity extends AppCompatActivity {
                 && taskViewport.line() == form.targetLine
             ? taskViewport.y()
             : -1;
+    if (EditorRevision.unchanged(form, template)) {
+      recovery.clear(vault);
+      editor = null;
+      conflictPending = false;
+      lastError = null;
+      taskViewport = null;
+      if (returnY >= 0) showDayAt(returnY);
+      else showDay();
+      if (after != null) after.run();
+      return;
+    }
+    recovery.save(editor, vault);
     String selectedVault = vault;
     Markdown from = new Markdown(form.sourceSnapshot), to = new Markdown(form.destinationSnapshot);
     SafVaultStorage selectedStorage = storage;

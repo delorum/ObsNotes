@@ -191,4 +191,41 @@ public class DailyChecklistTest {
     assertFalse(DailyChecklist.load(storage, DiaryLayout.path(day), day).workOk());
     assertFalse(ok(rows("## Погода\n```text\nПогода:: fake\n```\n"), "Погода"));
   }
+
+  @Test
+  public void anyOfTheFourNumberedSnackSectionsCompletesSnacks() {
+    for (int number = 1; number <= 4; number++) {
+      var table = rows("## Питание\n### Перекус " + number + "\nяблоко\n### Ужин\n");
+      assertTrue("Snack " + number, row(table, "Питание").status().get(3).ok());
+    }
+  }
+
+  @Test
+  public void emptySnackSectionsAndTheirSiblingHeadingsDoNotCompleteSnacks() {
+    for (int number = 1; number <= 4; number++) {
+      var table =
+          rows("## Питание\n### Перекус " + number + "\n\n### Перекус 5\nother\n### Ужин\nmeal\n");
+      assertFalse("Snack " + number, row(table, "Питание").status().get(3).ok());
+    }
+    assertFalse(
+        row(
+                rows(
+                    "## Питание\n"
+                        + "### Перекус 3\n"
+                        + "- [ ] #task/diary Fact\n"
+                        + "```dataviewjs\n"
+                        + "await dv.view(\"Скрипты/Dataview/crossPeople\");\n"
+                        + "```\n"),
+                "Питание")
+            .status()
+            .get(3)
+            .ok());
+  }
+
+  @Test
+  public void nestedSnackHeadingAloneIsEmptyButItsContentCounts() {
+    String base = "## Питание\n### Перекус 2\n#### Дополнения\n";
+    assertFalse(row(rows(base), "Питание").status().get(3).ok());
+    assertTrue(row(rows(base + "яблоко\n"), "Питание").status().get(3).ok());
+  }
 }

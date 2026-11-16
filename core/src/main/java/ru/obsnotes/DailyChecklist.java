@@ -168,7 +168,11 @@ public final class DailyChecklist {
             Map.entry("### Завтрак", "Завтрак"),
             Map.entry("### Обед", "Обед"),
             Map.entry("### Ужин", "Ужин"),
-            Map.entry("### Перекусы", "Перекусы"));
+            Map.entry("### Перекусы", "Перекусы"),
+            Map.entry("### Перекус 1", "Перекусы"),
+            Map.entry("### Перекус 2", "Перекусы"),
+            Map.entry("### Перекус 3", "Перекусы"),
+            Map.entry("### Перекус 4", "Перекусы"));
     for (String raw : doc.text.split("\\r?\\n")) {
       if (raw.contains("![[") && raw.contains(".webp") && !raw.contains("line")) photos++;
       String line = raw.strip();
@@ -178,6 +182,10 @@ public final class DailyChecklist {
       }
       if (line.startsWith("## ")) {
         section = "";
+        continue;
+      }
+      if (section.equals("Перекусы") && line.matches("^#{1,6}\\s+.*")) {
+        if (line.matches("^#{1,3}\\s+.*")) section = "";
         continue;
       }
       if (!content(line) || !rules.countable(line)) continue;

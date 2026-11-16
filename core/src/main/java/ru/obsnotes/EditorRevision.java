@@ -1,0 +1,126 @@
+package ru.obsnotes;
+
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.util.*;
+
+/** Semantic editor contents, excluding cursor, widget state and generated paragraph identities. */
+public final class EditorRevision {
+  private EditorRevision() {}
+
+  private static void add(StringBuilder key, Object value) {
+    String text = String.valueOf(value);
+    key.append(text.length()).append(':').append(text);
+  }
+
+  public static String contents(EditorState owner, Markdown template) {
+    StringBuilder key = new StringBuilder();
+    add(key, owner.fresh);
+    add(key, owner.weatherForm);
+    add(key, owner.taskAppend);
+    add(key, owner.destinationPath);
+    add(key, owner.editableText());
+    List<EditorState> forms =
+        owner.parts == null
+            ? List.of(owner)
+            : owner.parts.parts.stream().map(EditorParts.Part::form).toList();
+    PartLinks links = owner.parts == null ? new PartLinks() : owner.parts.effectiveLinks();
+    Map<String, Integer> indices = new HashMap<>();
+    for (int i = 0; i < forms.size(); i++) indices.put(forms.get(i).partId, i);
+    add(key, forms.size());
+    for (EditorState form : forms) {
+      add(key, form.destinationPath);
+      add(key, form.kind);
+      add(key, form.heading);
+      if (form.kind != Markdown.Kind.SECTION) {
+        add(key, form.targetLine);
+        add(key, form.targetSource);
+      }
+      if (form.kind == Markdown.Kind.TASK) add(key, form.appendTaskText);
+      add(key, form.editableText());
+      for (int i = 0; i < form.fieldCount(); i++) add(key, form.fieldName(i));
+      add(key, form.fieldCount());
+      var catalog = form.routingCatalog(template);
+      List<String> tags = new ArrayList<>();
+      Set<String> fullSections = new TreeSet<>();
+      for (var tag : form.tags()) {
+        String location =
+            tag.oneLine()
+                ? "@" + tag.line(form.editableText())
+                : tag.person() ? "@" + tag.position() : "";
+        for (var token : catalog.split(tag.ids())) {
+          String id = token.text().toLowerCase(Locale.ROOT);
+          if (tag.kind().equals("crossPeople") && token.choice() != null) {
+            String heading = token.choice().target().heading();
+            if (!heading.equals(form.heading)) fullSections.add(heading);
+          } else tags.add(tag.kind() + location + "/" + id);
+        }
+      }
+      Collections.sort(tags);
+      add(key, tags.size());
+      for (String tag : tags) add(key, tag);
+      add(key, fullSections.size());
+      for (String section : fullSections) add(key, section);
+      boolean rootUpdate =
+          !form.rootPath.isEmpty() && !form.rootOriginal.equals(form.rootReplacement);
+      add(key, rootUpdate);
+      if (rootUpdate) {
+        add(key, form.rootPath);
+        add(key, form.rootOriginal);
+        add(key, form.rootReplacement);
+      }
+      add(key, Events.id(form.text));
+      add(key, !Events.rootId(form.text).isEmpty() || links.rootIds().contains(form.partId));
+      String parent = links.parents.get(form.partId);
+      if (parent != null) add(key, "part:" + indices.get(parent));
+      else
+        add(
+            key,
+            Events.parent(form.sourcePath, form.text)
+                .map(p -> p.path() + "#^" + p.id())
+                .orElse(""));
+    }
+    try {
+      return "v1:"
+          + Base64.getEncoder()
+              .encodeToString(
+                  MessageDigest.getInstance("SHA-256")
+                      .digest(key.toString().getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new AssertionError(impossible);
+    }
+  }
+
+  public static void remember(EditorState state, Markdown template) {
+    state.initialRevision = contents(state, template);
+  }
+
+  /** Migrate old recovery records from their original source, never from the current edits. */
+  public static void recoverBaseline(EditorState state, Markdown template) {
+    if (!state.initialRevision.isEmpty()) return;
+    try {
+      Markdown source = new Markdown(state.sourceSnapshot);
+      EditorState initial;
+      if (state.weatherForm) initial = EditorState.weather(state.sourcePath, source);
+      else if (!state.fresh)
+        initial =
+            EditorState.editing(state.sourcePath, source, template, state.originalBlock(source));
+      else return;
+      state.initialRevision = contents(initial, template);
+    } catch (IllegalArgumentException invalidOriginal) {
+      // Existing conflict handling retains edits when an old snapshot cannot be reconstructed.
+    }
+  }
+
+  public static boolean unchanged(EditorState state, Markdown template) {
+    boolean taskOnly =
+        state.parts == null
+            ? state.taskOnly()
+            : state.parts.parts.stream().anyMatch(p -> p.form().taskOnly());
+    if (state.fresh && !taskOnly && state.emptyNote()) return true;
+    recoverBaseline(state, template);
+    return !state.initialRevision.isEmpty()
+        && (state.parts == null || state.parts.error.isEmpty())
+        && state.initialRevision.equals(contents(state, template));
+  }
+}

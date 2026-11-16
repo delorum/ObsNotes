@@ -613,4 +613,19 @@ public class EditorPartsTest {
     assertTrue(s.parts.effectiveLinks().parents.isEmpty());
     assertEquals("Связь", s.parts.relationLabel(0));
   }
+
+  @Test
+  public void legacyCheckboxRecoveryKeepsExistingEdgesButDoesNotAutoLinkNewParts() {
+    var s = editor();
+    s.edit("Alpha\n\nBeta");
+    s.parts.linked = true;
+    s.enableParts(TEMPLATE);
+    assertFalse(s.parts.linked);
+    assertTrue(s.parts.links.configured);
+    assertEquals(1, s.parts.links.parents.size());
+    s.edit("Alpha\n\nBeta\n\nGamma");
+    assertEquals("", s.parts.error);
+    assertEquals(1, s.parts.links.parents.size());
+    assertEquals("Связь", s.parts.relationLabel(2));
+  }
 }

@@ -166,22 +166,21 @@ class EditorPartsTest(unittest.TestCase):
         d.tap(d.find(desc='Удалить раздел: Заметки', down=False))
         d.wait_for(lambda: not state()['items'][0]['routes'])
         self.assertFalse(d.nodes(d.tree(), desc='Связь части 1'))
-        d.tap(d.find(text='Связать части'))
-        d.wait_for(lambda: state()['linked'])
-        self.assertIsNotNone(d.find(desc='Связь части 1', down=False))
-        d.tap(d.find(text='Связать части'))
-        d.wait_for(lambda: not state()['linked'])
-        self.assertFalse(d.nodes(d.tree(), desc='Связь части 1'))
-        d.tap(d.find(text='Связать части'))
-        d.wait_for(lambda: state()['linked'])
-        parent(2,1)
-        parent(3,2)
+        self.assertFalse(d.nodes(d.tree(),text='Связать части'))
+        for child, target in ((2,1),(3,2)):
+            caret(child)
+            d.tap(d.find(text='Связать'))
+            label=f'К части {target} · '+('FirstPart','SecondPart')[target-1]
+            d.tap(d.nodes(d.tree(),text=label)[0])
+            expected=state()['items'][target-1]['partId']
+            child_id=state()['items'][child-1]['partId']
+            d.wait_for(lambda: state()['links']['parents'].get(child_id)==expected)
         items = state()['items']
         edges = state()['links']['parents']
         self.assertEqual(items[0]['partId'], edges[items[1]['partId']])
         self.assertEqual(items[1]['partId'], edges[items[2]['partId']])
         hide_ime()
-        self.assertEqual('true',d.find(text='Связать части').get('checked'))
+        self.assertFalse(d.nodes(d.tree(),text='Связать части'))
         self.assertIsNotNone(d.find(text='К части 1 · Корень',down=False))
         self.assertIsNotNone(d.find(text='К части 2'))
         hide_ime()

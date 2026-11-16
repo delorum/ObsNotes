@@ -37,6 +37,7 @@ public final class EditorRecovery {
   private JSONObject encode(EditorState s) throws JSONException {
     JSONObject j = new JSONObject();
 
+    j.put("initialRevision", s.initialRevision);
     j.put("partId", s.partId);
     j.put("sourcePath", s.sourcePath);
     j.put("destinationPath", s.destinationPath);
@@ -103,6 +104,7 @@ public final class EditorRecovery {
 
   private EditorState decode(JSONObject j) throws JSONException {
     EditorState s = new EditorState();
+    s.initialRevision = j.optString("initialRevision");
     s.partId = j.optString("partId", s.partId);
     s.sourcePath = j.getString("sourcePath");
     s.destinationPath = j.getString("destinationPath");

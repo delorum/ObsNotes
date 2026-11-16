@@ -115,6 +115,7 @@ public final class VaultRepository {
       LocalDate date,
       LocalDateTime now,
       CleanupRules rules) {
+    if (EditorRevision.unchanged(state, template)) return List.of();
     if (state.parts != null)
       return state.parts.plan(state, source, destination, template, date, now, rules);
     if (state.weatherForm)
