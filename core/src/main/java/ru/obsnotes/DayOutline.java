@@ -89,13 +89,17 @@ public final class DayOutline {
     if (query.isBlank()) return roots;
     List<Section> flat = new ArrayList<>();
     flatten(roots, flat);
-    return FuzzySearch.ranked(
-        flat,
-        query,
-        s ->
-            catalog.searchLabel(
-                catalog.resolve(
-                    new Markdown.Target(s.title(), s.heading(), -1, "", Markdown.Kind.SECTION))));
+    return FuzzySearch.ranked(flat, query, s -> catalog.sectionSearchLabel(s.heading()));
+  }
+
+  /** Checklist links address a heading title even when its Markdown nesting changes. */
+  public static String resolveHeading(List<Section> roots, String requested) {
+    List<Section> flat = new ArrayList<>();
+    flatten(roots, flat);
+    for (var section : flat) if (section.heading().equals(requested)) return requested;
+    String title = requested.replaceFirst("^#+ +", "");
+    var matches = flat.stream().filter(s -> s.title().equals(title)).toList();
+    return matches.size() == 1 ? matches.get(0).heading() : null;
   }
 
   private static void flatten(List<Section> source, List<Section> out) {

@@ -327,10 +327,8 @@ public final class MainActivity extends AppCompatActivity {
                       && document != null
                       && document.text.equals(previous)
                       && !fresh.equals(previous)) {
-                    int y = ui.scroll.getScrollY();
                     document = new Markdown(fresh);
-                    showDay();
-                    ui.scroll.post(() -> ui.scroll.scrollTo(0, y));
+                    showDayKeepingPosition();
                   }
                 });
           } catch (Exception error) {
@@ -423,6 +421,13 @@ public final class MainActivity extends AppCompatActivity {
           }
         });
     if (lastError != null) ui.error(lastError);
+  }
+
+  private void showDayKeepingPosition() {
+    int y = ui.scroll.getScrollY();
+    showDay();
+    var scroll = ui.scroll;
+    ui.afterLayout(scroll, () -> scroll.scrollTo(0, y));
   }
 
   private void home() {
@@ -880,9 +885,8 @@ public final class MainActivity extends AppCompatActivity {
           return true;
         },
         ok -> {
-          checklistContext = null;
           if (path.equals(selectedPath)) document = after;
-          showDay();
+          showDayKeepingPosition();
         });
   }
 
@@ -930,11 +934,10 @@ public final class MainActivity extends AppCompatActivity {
     String selectedPath = path;
     LocalDate selectedDay = day;
     SafVaultStorage selectedStorage = storage;
-    if (checklistContext != null
-        && checklistPath.equals(path)
-        && checklistText.equals(snapshot.text)) {
+    if (checklistContext != null && checklistPath.equals(path)) {
+      // Keep the table height stable during refresh; recompute facts from the new document now.
       loaded.accept(DailyChecklist.rows(snapshot, checklistContext));
-      return;
+      if (checklistText.equals(snapshot.text)) return;
     }
     io.execute(
         () -> {

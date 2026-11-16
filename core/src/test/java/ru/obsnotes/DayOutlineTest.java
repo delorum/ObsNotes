@@ -6,6 +6,32 @@ import java.util.*;
 import org.junit.Test;
 
 public class DayOutlineTest {
+  @Test
+  public void checklistLinksResolveActualNestingAndOpenTheEntireAncestorPath() {
+    var doc =
+        new Markdown(
+            "## Чеклист\n\n"
+                + "## Короткая часть\n"
+                + "### Машина\n\n"
+                + "### Спорт и диета\n"
+                + "- [ ] #task/diary/diet Соблюдал диету\n");
+    var outline = DayOutline.sections(doc, doc);
+    String target = DayOutline.resolveHeading(outline, "## Спорт и диета");
+    assertEquals("### Спорт и диета", target);
+    assertEquals(
+        List.of("## Короткая часть", "### Спорт и диета"), DayOutline.ancestors(outline, target));
+    assertEquals("### Машина", DayOutline.resolveHeading(outline, "### Машина"));
+  }
+
+  @Test
+  public void missingOrAmbiguousChecklistLinksDoNotNavigateToAnUnrelatedSection() {
+    var doc = new Markdown("## Один\n### Повтор\n\n## Два\n#### Повтор\n");
+    var outline = DayOutline.sections(doc, doc);
+    assertNull(DayOutline.resolveHeading(outline, "## Нет"));
+    assertNull(DayOutline.resolveHeading(outline, "## Повтор"));
+    assertEquals("#### Повтор", DayOutline.resolveHeading(outline, "#### Повтор"));
+  }
+
   private static final Markdown TEMPLATE =
       new Markdown(
           "## План\n\n"

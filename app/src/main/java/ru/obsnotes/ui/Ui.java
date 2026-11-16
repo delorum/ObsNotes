@@ -53,6 +53,19 @@ public final class Ui {
           .hideSoftInputFromWindow(focus.getWindowToken(), 0);
   }
 
+  /** Run scroll adjustments after new child positions have actually been laid out. */
+  public void afterLayout(View view, Runnable action) {
+    view.getViewTreeObserver()
+        .addOnGlobalLayoutListener(
+            new ViewTreeObserver.OnGlobalLayoutListener() {
+              public void onGlobalLayout() {
+                view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                if (view.isAttachedToWindow()) action.run();
+              }
+            });
+    view.requestLayout();
+  }
+
   public LinearLayout column() {
     LinearLayout v = new LinearLayout(activity);
     v.setOrientation(LinearLayout.VERTICAL);

@@ -35,6 +35,23 @@ public class DailyChecklistTest {
   }
 
   @Test
+  public void everyInternalChecklistLinkResolvesIncludingNestedSportAndCar() {
+    var doc =
+        new Markdown(
+            "## Заметки\n## Краткое описание дня\n## Основные события дня\n"
+                + "## Местоположение\n## Погода\n## Настроение\n## Питание\n## Мама\n"
+                + "## Короткая часть\n### Машина\n### Спорт и диета\n");
+    var outline = DayOutline.sections(doc, doc);
+    int linked = 0;
+    for (var row : DailyChecklist.rows(doc, EMPTY)) {
+      if (row.heading().isEmpty()) continue;
+      linked++;
+      assertNotNull(row.label(), DayOutline.resolveHeading(outline, row.heading()));
+    }
+    assertEquals(12, linked);
+  }
+
+  @Test
   public void populatedFieldsMoodPhotosAndCrossReferencesSetTheirStatuses() {
     var rows =
         rows(

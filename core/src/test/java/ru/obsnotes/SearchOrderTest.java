@@ -55,4 +55,45 @@ public class SearchOrderTest {
     assertTrue(FuzzySearch.ranked(input, "xyz", s -> s).isEmpty());
     assertEquals(List.of("abc", "def"), input);
   }
+
+  @Test
+  public void sectionSearchFindsFieldKeysInTheNoteAndTemplateWithExactFirstRanking() {
+    var template =
+        new Markdown("## Погода\nТемпература::\n\n## Родитель\n### Самочувствие\nДавление::\n");
+    var doc =
+        new Markdown(
+            "## Температура воздуха\n\n"
+                + "## Погода\n"
+                + "Погода:: ясно\n\n"
+                + "## Особое\n"
+                + "ТеМпеРаXYZтура:: 1\n");
+    assertEquals(
+        List.of("## Погода", "## Температура воздуха", "## Особое"),
+        DayOutline.search(doc, template, "температура").stream()
+            .map(DayOutline.Section::heading)
+            .toList());
+    assertEquals("### Самочувствие", DayOutline.search(doc, template, "двле").get(0).heading());
+  }
+
+  @Test
+  public void fieldSearchDoesNotIndexValuesCodeFrontmatterOrUnrelatedSections() {
+    var doc =
+        new Markdown(
+            "---\n"
+                + "Секрет:: value\n"
+                + "---\n"
+                + "## Погода\n"
+                + "Температура:: уникально\n"
+                + "```text\n"
+                + "Пример:: 2\n"
+                + "```\n"
+                + "## Прочее\n"
+                + "Другое:: 3\n");
+    for (String query : List.of("уникально", "Пример", "Секрет"))
+      assertTrue(query, DayOutline.search(doc, doc, query).isEmpty());
+    var found = DayOutline.search(doc, doc, "температура");
+    assertEquals(1, found.size());
+    assertEquals("## Погода", found.get(0).heading());
+    assertEquals("## Прочее", DayOutline.search(doc, doc, "другое").get(0).heading());
+  }
 }

@@ -36,6 +36,7 @@ public final class DayScreen {
 
     void searchChanged(String query);
 
+    /** Callbacks run on the UI thread, including a synchronous cached result. */
     void checklist(Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed);
   }
 
@@ -51,6 +52,7 @@ public final class DayScreen {
     var previous = ui.activity.getCurrentFocus();
     boolean searchFocused = previous != null && "section-search".equals(previous.getTag());
     ui.page("ObsNotes", null);
+    ui.body.setFocusableInTouchMode(true);
     if (connected) ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     if (connected)
       ui.action(ui.bar, ru.obsnotes.R.drawable.ic_refresh, "Обновить", actions::refresh);
@@ -90,19 +92,25 @@ public final class DayScreen {
     var catalog = new Routing.Catalog(document, template);
     EditText search = ui.field(ui.body, "Поиск разделов", query, false, null);
     search.setTag("section-search");
+    search.setContentDescription("Поиск разделов");
     LinearLayout results = ui.column();
     ui.body.addView(results);
     Map<String, android.view.View> headers = new HashMap<>();
     Runnable[] render = {null};
     Consumer<String> reveal =
         heading -> {
-          expanded.addAll(DayOutline.ancestors(outline, heading));
+          String resolved = DayOutline.resolveHeading(outline, heading);
+          if (resolved == null) return;
+          expanded.addAll(DayOutline.ancestors(outline, resolved));
           ui.hideKeyboard();
+          search.clearFocus();
+          ui.body.requestFocus();
           if (!search.getText().toString().isEmpty()) search.setText("");
           else render[0].run();
-          ui.scroll.post(
+          ui.afterLayout(
+              results,
               () -> {
-                var target = headers.get(heading);
+                var target = headers.get(resolved);
                 if (target != null) {
                   int y = 0;
                   android.view.View v = target;
@@ -110,7 +118,7 @@ public final class DayScreen {
                     y += v.getTop();
                     v = (android.view.View) v.getParent();
                   }
-                  ui.scroll.smoothScrollTo(0, y);
+                  ui.scroll.scrollTo(0, y);
                 }
               });
         };
@@ -133,7 +141,7 @@ public final class DayScreen {
     if (searchFocused) {
       search.requestFocus();
       search.setSelection(search.length());
-    }
+    } else ui.body.requestFocus();
   }
 
   private static void section(

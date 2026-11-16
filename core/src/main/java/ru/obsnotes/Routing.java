@@ -27,6 +27,7 @@ public final class Routing {
     public final List<Choice> choices;
     private final Map<String, Choice> canonical = new LinkedHashMap<>();
     private final Map<String, List<String>> aliases = new LinkedHashMap<>();
+    private final Map<String, String> sectionLabels = new LinkedHashMap<>();
 
     public Catalog(Markdown destination, Markdown template) {
       Map<String, String> byHeading = new LinkedHashMap<>();
@@ -43,6 +44,27 @@ public final class Routing {
         if (!id.isEmpty()) canonical.putIfAbsent(id.toLowerCase(Locale.ROOT), choice);
       }
       choices = List.copyOf(rows);
+      Map<String, Set<String>> keys = new LinkedHashMap<>();
+      for (var doc : List.of(template, destination)) {
+        var fields = InlineFields.all(doc);
+        for (var section : doc.sections)
+          for (var field : fields)
+            if (field.start() >= section.body() && field.start() < section.end())
+              keys.computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>())
+                  .add(field.key());
+      }
+      for (var choice : choices)
+        if (choice.target().kind() == Markdown.Kind.SECTION)
+          sectionLabels.put(
+              choice.target().heading(),
+              searchLabel(choice)
+                  + "\n"
+                  + String.join("\n", keys.getOrDefault(choice.target().heading(), Set.of())));
+    }
+
+    /** Search section names, aliases and field keys, without indexing field values. */
+    public String sectionSearchLabel(String heading) {
+      return sectionLabels.getOrDefault(heading, heading);
     }
 
     public Choice resolve(Markdown.Target target) {
