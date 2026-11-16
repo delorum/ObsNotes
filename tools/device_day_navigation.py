@@ -8,6 +8,7 @@ No production note is opened by this test.
 """
 import argparse
 import datetime as dt
+import json
 import re
 import shlex
 import subprocess
@@ -42,11 +43,11 @@ def assert_unlocked():
         raise AssertionError('Phone is locked; UI input refused')
 
 
-def tree():
+def tree(allow_missing=False):
     assert_unlocked()
     adb('shell', 'uiautomator', 'dump', '/data/local/tmp/obsnotes-navigation.xml')
     root = ET.fromstring(adb('exec-out', 'cat', '/data/local/tmp/obsnotes-navigation.xml'))
-    if not any(n.get('package') == 'ru.obsnotes' for n in root.iter('node')):
+    if not allow_missing and not any(n.get('package') == 'ru.obsnotes' for n in root.iter('node')):
         raise AssertionError('ObsNotes is not visible; UI input refused')
     return root
 
@@ -104,10 +105,24 @@ def wait_for(predicate):
     raise AssertionError('Expected state did not arrive')
 
 
+def pending_editor():
+    for node in ET.fromstring(preferences()):
+        if node.get('name', '').startswith(('editor-', 'draft-')) and FIXTURE in (node.text or ''):
+            return json.loads(node.text)
+    raise AssertionError('No editor state for the isolated fixture')
+
+
+def keyboard_shown():
+    state = adb('shell', 'dumpsys', 'input_method').decode()
+    return bool(re.search(r'\bmInputShown=true\b', state))
+
+
 class DayNavigationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        adb('shell', 'input', 'keyevent', '224')  # Wake the display; a locked device still aborts.
         assert_unlocked()
+        adb('shell', 'cmd', 'statusbar', 'collapse')
         # A previous fixture must never be silently overwritten or removed.
         exists = adb('shell', 'sh', '-c', shlex.quote('test -e ' + PHONE + ' && echo exists || true'))
         if b'exists' in exists:
@@ -141,6 +156,7 @@ class DayNavigationTest(unittest.TestCase):
                      'await dv.view("Скрипты/Dataview/crossPeople", {person: "WeatherAlias"});\n```\n'
                      'Погода:: test\nTemperature:: +10\nТемпература:: +10\n\n'
                      '## Короткая часть\n### Машина\n\n### Спорт и диета\n'
+                     '```dataviewjs\nawait dv.view("Скрипты/Dataview/crossPeople", {person: "SportAlias"});\n```\n'
                      '- [ ] #task/diary/diet TestFact\n\n')
         cls.source = template
         with tempfile.TemporaryDirectory(prefix='obsnotes-navigation-fixture-') as temp:
@@ -156,7 +172,7 @@ class DayNavigationTest(unittest.TestCase):
             rules.write_text('## Пустые маркеры\n- TestMarker\n')
             adb('push', str(local), '/sdcard/Documents/')
         adb('shell', 'am', 'start', '-n', 'ru.obsnotes/.MainActivity')
-        wait_for(lambda: bool(nodes(tree(), desc='Поиск разделов')))
+        wait_for(lambda: bool(nodes(tree(allow_missing=True), desc='Поиск разделов')))
 
     @classmethod
     def restore(cls):
@@ -214,6 +230,8 @@ class DayNavigationTest(unittest.TestCase):
     def test_5_moving_a_note_reads_shared_rules_and_compacts_the_actual_file(self):
         tap(find(desc='Сегодня'))
         tap(find(text='MoveMe', down=False))
+        wait_for(keyboard_shown)
+        adb('shell', 'input', 'keyevent', '4')  # Hide the editor IME before routing controls.
         tap(find(text='Разделы'))
         field = next(n for n in tree().iter('node') if n.get('class') == 'android.widget.EditText')
         self.assertEqual('true', field.get('focused'))
@@ -228,6 +246,64 @@ class DayNavigationTest(unittest.TestCase):
         self.assertNotIn('\n\n\n', result)
         self.assertEqual('## Пустые маркеры\n- TestMarker\n',
                          adb('exec-out', 'cat', PHONE + '/Скрипты/Настройки/Сжатие дневника.md').decode())
+
+    def assert_input_ready(self, expected):
+        fields = [n for n in tree().iter('node') if n.get('class') == 'android.widget.EditText']
+        self.assertEqual(1, len(fields))
+        self.assertEqual('true', fields[0].get('focused'))
+        if expected:
+            self.assertEqual(expected, fields[0].get('text'))
+        else:
+            self.assertEqual('', pending_editor()['text'])
+            self.assertIn(fields[0].get('text'), ('', fields[0].get('hint')))
+        wait_for(keyboard_shown)
+
+    def test_6_new_notes_entry_focuses_text_and_shows_keyboard_without_an_extra_tap(self):
+        tap(find(desc='Сегодня'))
+        tap(find(desc='Новая заметка', down=False))
+        self.assert_input_ready('')
+        self.assertEqual('## Заметки', pending_editor()['heading'])
+        assert_unlocked()
+        adb('shell', 'input', 'text', 'NewDefault')
+        tap(find(desc='Назад'))
+        path = PHONE + '/' + self.relative
+        wait_for(lambda: 'NewDefault' in adb('exec-out', 'cat', path).decode())
+
+    def test_7_add_buttons_preset_top_level_and_nested_sections_from_search(self):
+        for search, title, heading, payload in [
+            ('temperature', 'Погода', '## Погода', 'DirectWeather'),
+            ('SportAlias', 'Спорт и диета', '### Спорт и диета', 'DirectNested'),
+        ]:
+            with self.subTest(heading=heading):
+                tap(find(desc='Сегодня'))
+                query(search)
+                tap(find(desc='Новая заметка: ' + title))
+                self.assert_input_ready('')
+                form = pending_editor()
+                self.assertEqual(heading, form['heading'])
+                self.assertEqual(heading, form['routes'][0]['heading'])
+                self.assertEqual(1, len(form['routes']))
+                assert_unlocked()
+                adb('shell', 'input', 'text', payload)
+                tap(find(desc='Назад'))
+                path = PHONE + '/' + self.relative
+                wait_for(lambda: payload in adb('exec-out', 'cat', path).decode())
+                result = adb('exec-out', 'cat', path).decode()
+                self.assertEqual(1, result.count(payload))
+                self.assertGreater(result.index(payload), result.index(heading))
+                self.assertNotIn('#crossPeople/', result)
+
+    def test_8_existing_block_focuses_at_its_end_and_typing_preserves_the_rest_of_the_file(self):
+        path = PHONE + '/' + self.relative
+        before = adb('exec-out', 'cat', path).decode()
+        tap(find(text='DirectNested'))
+        self.assert_input_ready('DirectNested')
+        assert_unlocked()
+        adb('shell', 'input', 'text', 'Suffix')
+        tap(find(desc='Назад'))
+        wait_for(lambda: 'DirectNestedSuffix' in adb('exec-out', 'cat', path).decode())
+        self.assertEqual(before.replace('DirectNested', 'DirectNestedSuffix'),
+                         adb('exec-out', 'cat', path).decode())
 
 
 if __name__ == '__main__':

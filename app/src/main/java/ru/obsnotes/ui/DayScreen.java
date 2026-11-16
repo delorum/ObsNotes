@@ -22,7 +22,7 @@ public final class DayScreen {
 
     void today();
 
-    void add();
+    void add(String heading);
 
     void edit(Markdown.Block block);
 
@@ -184,8 +184,11 @@ public final class DayScreen {
             section.title() + " · " + section.count(),
             16,
             section.count() == 0 && heading.equals("## Заметки") ? Ui.GREEN : Ui.INK));
-    if (heading.equals("## Заметки"))
-      ui.action(header, ru.obsnotes.R.drawable.ic_add, "Новая заметка", actions::add);
+    ui.action(
+        header,
+        ru.obsnotes.R.drawable.ic_add,
+        heading.equals("## Заметки") ? "Новая заметка" : "Новая заметка: " + section.title(),
+        () -> actions.add(heading));
     if (heading.equals("## Погода"))
       ui.action(
           header, ru.obsnotes.R.drawable.ic_weather, "Погода и температура", actions::weather);

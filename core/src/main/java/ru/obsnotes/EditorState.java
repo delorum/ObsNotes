@@ -22,6 +22,53 @@ public final class EditorState {
   public String fallbackHeading = "";
   public List<Routing.Choice> routes = List.of();
 
+  private static EditorState at(String path, Markdown source, String heading) {
+    EditorState state = new EditorState();
+    state.sourcePath = state.destinationPath = path;
+    state.sourceSnapshot = state.destinationSnapshot = source.text;
+    state.heading = heading;
+    return state;
+  }
+
+  public static EditorState newNote(
+      String path, Markdown source, Markdown template, String heading) {
+    if (source.section(heading) == null && template.section(heading) == null)
+      throw new IllegalArgumentException("Раздел не найден");
+    EditorState state = at(path, source, heading);
+    state.routeChosen = !heading.equals("## Заметки");
+    state.initializeRoutes(template);
+    return state;
+  }
+
+  public static EditorState editing(
+      String path, Markdown source, Markdown template, Markdown.Block block) {
+    if (!source.blocks.contains(block))
+      throw new IllegalArgumentException("Текстовый блок изменился");
+    EditorState state = at(path, source, block.section().heading());
+    state.fresh = false;
+    state.original = state.text = block.text();
+    state.start = block.start();
+    state.end = block.end();
+    state.initializeRoutes(template);
+    state.cursor = state.editableText().length();
+    return state;
+  }
+
+  public record InputCaret(int field, int offset) {}
+
+  /** Cursor offsets refer to visible values, never field keys or hidden Markdown metadata. */
+  public InputCaret inputCaret() {
+    int at = Math.max(0, cursor);
+    int count = fieldCount();
+    if (count == 0) return new InputCaret(0, Math.min(at, editableText().length()));
+    for (int i = 0; i < count; i++) {
+      int length = fieldValue(i).length();
+      if (at <= length || i == count - 1) return new InputCaret(i, Math.min(at, length));
+      at -= length + 1;
+    }
+    throw new IllegalStateException("Нет поля ввода");
+  }
+
   public boolean taskOnly() {
     return kind == Markdown.Kind.TASK && !appendTaskText;
   }
@@ -31,13 +78,10 @@ public final class EditorState {
   }
 
   public static EditorState weather(String path, Markdown source) {
-    EditorState state = new EditorState();
-    state.sourcePath = state.destinationPath = path;
-    state.sourceSnapshot = state.destinationSnapshot = source.text;
+    EditorState state = at(path, source, "## Погода");
     state.fresh = false;
     state.weatherForm = true;
     state.editFields = true;
-    state.heading = "## Погода";
     state.original =
         state.text =
             "Погода:: "

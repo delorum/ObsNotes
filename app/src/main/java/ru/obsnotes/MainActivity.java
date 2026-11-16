@@ -387,12 +387,12 @@ public final class MainActivity extends AppCompatActivity {
             }
           }
 
-          public void add() {
-            if (!busy) startEditor(null);
+          public void add(String heading) {
+            if (!busy) startEditor(null, heading);
           }
 
           public void edit(Markdown.Block block) {
-            if (!busy) startEditor(block);
+            if (!busy) startEditor(block, block.section().heading());
           }
 
           public void refresh() {
@@ -442,22 +442,18 @@ public final class MainActivity extends AppCompatActivity {
     if (connected && document != null && !polling) refreshQuietly();
   }
 
-  private void startEditor(Markdown.Block block) {
+  private void startEditor(Markdown.Block block, String heading) {
     cancelWeather();
     cancelNavigation();
     if (document == null) return;
-    editor = new EditorState();
-    editor.sourcePath = path;
-    editor.destinationPath = path;
-    editor.sourceSnapshot = document.text;
-    editor.destinationSnapshot = document.text;
-    if (block != null) {
-      editor.fresh = false;
-      editor.original = block.text();
-      editor.text = block.text();
-      editor.start = block.start();
-      editor.end = block.end();
-      editor.heading = block.section().heading();
+    try {
+      editor =
+          block == null
+              ? EditorState.newNote(path, document, template, heading)
+              : EditorState.editing(path, document, template, block);
+    } catch (IllegalArgumentException error) {
+      ui.error(error.getMessage());
+      return;
     }
     recovery.save(editor, vault);
     showEditor();

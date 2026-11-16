@@ -55,6 +55,7 @@ public final class EditorScreen {
                         ? state.routingCatalog(template).resolve(state.target()).label()
                         : state.fresh ? "Новая заметка" : "Текстовый блок";
     ui.page(title, actions::back);
+    EditorState.InputCaret caret = state.inputCaret();
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
     Routing.Catalog catalog = state.routingCatalog(template);
@@ -100,9 +101,10 @@ public final class EditorScreen {
           (v, focused) -> {
             state.cursor = offset(edits, index) + Math.max(0, edit.getSelectionStart());
           });
-      int at = state.cursor - offset(edits, i);
-      if (at >= 0 && at <= edit.length()) edit.setSelection(at);
     }
+    EditText active = edits.get(caret.field());
+    active.setSelection(caret.offset());
+    ui.focusInput(active);
     if (state.weatherForm) {
       refresh.run();
       weatherRow(ui, state, weatherCity, actions);

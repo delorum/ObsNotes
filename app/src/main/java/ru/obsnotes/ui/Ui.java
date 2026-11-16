@@ -39,10 +39,12 @@ public final class Ui {
   public void focusInput(EditText field) {
     field.requestFocus();
     field.post(
-        () ->
-            ((android.view.inputmethod.InputMethodManager)
-                    activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
-                .showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT));
+        () -> {
+          if (!field.isAttachedToWindow() || !field.hasFocus()) return;
+          ((android.view.inputmethod.InputMethodManager)
+                  activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE))
+              .showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        });
   }
 
   public void hideKeyboard() {
