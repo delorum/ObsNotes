@@ -19,6 +19,7 @@ public final class MainActivity extends AppCompatActivity {
   private Ui ui;
   private SharedPreferences prefs;
   private EditorRecovery recovery;
+  private UsageHistory usage;
   private SafVaultStorage storage;
   private VaultRepository repository;
   private DiaryIndex index = new DiaryIndex();
@@ -68,6 +69,7 @@ public final class MainActivity extends AppCompatActivity {
     ui = new Ui(this);
     prefs = getSharedPreferences("obsnotes", MODE_PRIVATE);
     recovery = new EditorRecovery(prefs);
+    usage = new UsageHistory(prefs);
     vault = prefs.getString("vault", "");
     if (saved != null) {
       day = LocalDate.parse(saved.getString("day", LocalDate.now().toString()));
@@ -572,16 +574,19 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private List<Routing.Choice> routeChoices(Routing.Catalog catalog) {
-    return catalog.choices.stream()
-        .filter(c -> !editor.editFields || c.target().kind() == Markdown.Kind.SECTION)
-        .filter(
-            c ->
-                editor.fresh
-                    || !editor.sourcePath.equals(editor.destinationPath)
-                    || c.target().kind() == Markdown.Kind.SECTION
-                    || c.target().line() < editor.start
-                    || c.target().line() >= editor.end)
-        .collect(java.util.stream.Collectors.toList());
+    return usage
+        .load(vault)
+        .rankedRoutes(
+            catalog.choices.stream()
+                .filter(c -> !editor.editFields || c.target().kind() == Markdown.Kind.SECTION)
+                .filter(
+                    c ->
+                        editor.fresh
+                            || !editor.sourcePath.equals(editor.destinationPath)
+                            || c.target().kind() == Markdown.Kind.SECTION
+                            || c.target().line() < editor.start
+                            || c.target().line() >= editor.end)
+                .collect(java.util.stream.Collectors.toList()));
   }
 
   private void pickRouteReplacement(int index) {
@@ -619,7 +624,7 @@ public final class MainActivity extends AppCompatActivity {
     SearchPicker.show(
         ui,
         "Заменить метку",
-        options.items(),
+        usage.load(vault).ranked(options.items(), CrossReferences.Destination::heading),
         d -> d.id() + " · " + d.title(),
         !tag.person(),
         options.selected(),
@@ -684,7 +689,10 @@ public final class MainActivity extends AppCompatActivity {
     SearchPicker.show(
         ui,
         oneLine ? "Показать строку в разделах" : "Показать блок в разделах",
-        CrossReferences.selectable(template, person),
+        usage
+            .load(vault)
+            .ranked(
+                CrossReferences.selectable(template, person), CrossReferences.Destination::heading),
         d -> d.id() + " · " + d.title(),
         true,
         selected -> {
@@ -848,7 +856,9 @@ public final class MainActivity extends AppCompatActivity {
                   targetDay,
                   LocalDateTime.now(),
                   CleanupRules.load(selectedStorage));
+          var uses = SectionUsage.planned(form, selectedTemplate, changes);
           selectedRepository.commit(changes);
+          usage.record(selectedVault, uses);
           recovery.clear(selectedVault);
           return changes;
         },
