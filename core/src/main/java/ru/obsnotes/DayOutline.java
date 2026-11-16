@@ -7,13 +7,24 @@ public final class DayOutline {
   private DayOutline() {}
 
   public record Section(
-      String heading,
-      String title,
-      List<Markdown.Block> blocks,
-      List<CrossReferences.Projection> projections,
-      List<Section> children) {
+      String heading, String title, List<DayContentRules.Item> items, List<Section> children) {
     public int count() {
-      return blocks.size() + projections.size() + children.stream().mapToInt(Section::count).sum();
+      return (int) items.stream().filter(i -> i.view().counted()).count()
+          + children.stream().mapToInt(Section::count).sum();
+    }
+
+    public List<Markdown.Block> blocks() {
+      return items.stream()
+          .filter(i -> !i.projection())
+          .map(DayContentRules.Item::original)
+          .toList();
+    }
+
+    public List<CrossReferences.Projection> projections() {
+      return items.stream()
+          .filter(DayContentRules.Item::projection)
+          .map(i -> new CrossReferences.Projection(i.original(), i.view().text()))
+          .toList();
     }
   }
 
@@ -25,23 +36,29 @@ public final class DayOutline {
       this.section = section;
     }
 
-    Section build(Markdown document, Markdown template) {
-      List<Markdown.Block> blocks =
-          document.blocks.stream()
-              .filter(b -> b.section().heading().equals(section.heading()))
-              .collect(java.util.stream.Collectors.toList());
-      return new Section(
-          section.heading(),
-          section.title(),
-          blocks,
-          CrossReferences.project(document, template, section.heading()),
-          children.stream()
-              .map(c -> c.build(document, template))
-              .collect(java.util.stream.Collectors.toList()));
+    Section build(Markdown document, Markdown template, DayContentRules rules) {
+      List<DayContentRules.Item> items = new ArrayList<>();
+      for (var block : document.blocks)
+        if (block.section().heading().equals(section.heading())) {
+          var view = rules.view(block.text());
+          if (!view.raw().isBlank()) items.add(new DayContentRules.Item(block, false, view));
+        }
+      for (var projection : CrossReferences.project(document, template, section.heading())) {
+        var view = rules.view(projection.text());
+        if (!view.raw().isBlank())
+          items.add(new DayContentRules.Item(projection.origin(), true, view));
+      }
+      var nested = children.stream().map(c -> c.build(document, template, rules)).toList();
+      return new Section(section.heading(), section.title(), List.copyOf(items), nested);
     }
   }
 
   public static List<Section> sections(Markdown document, Markdown template) {
+    return sections(document, template, DayContentRules.EMPTY);
+  }
+
+  public static List<Section> sections(
+      Markdown document, Markdown template, DayContentRules rules) {
     List<Markdown.Section> order = new ArrayList<>(template.sections);
     Set<String> known = new HashSet<>();
     for (var s : order) known.add(s.heading());
@@ -70,7 +87,7 @@ public final class DayOutline {
     }
     List<Section> result =
         roots.stream()
-            .map(s -> s.build(document, template))
+            .map(s -> s.build(document, template, rules))
             .collect(java.util.stream.Collectors.toList());
     for (int i = 0; i < result.size(); i++)
       if (result.get(i).heading.equals("## Заметки")) {
@@ -104,13 +121,7 @@ public final class DayOutline {
 
   private static void flatten(List<Section> source, List<Section> out) {
     for (var section : source) {
-      out.add(
-          new Section(
-              section.heading(),
-              section.title(),
-              section.blocks(),
-              section.projections(),
-              List.of()));
+      out.add(section);
       flatten(section.children(), out);
     }
   }

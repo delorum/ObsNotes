@@ -147,6 +147,10 @@ public final class DailyChecklist {
   }
 
   public static List<Row> rows(Markdown doc, Context context) {
+    return rows(doc, context, DayContentRules.EMPTY);
+  }
+
+  public static List<Row> rows(Markdown doc, Context context, DayContentRules rules) {
     Map<String, List<String>> fields = new HashMap<>();
     for (var f : InlineFields.all(doc))
       fields.computeIfAbsent(f.key(), k -> new ArrayList<>()).add(f.value().strip());
@@ -176,7 +180,7 @@ public final class DailyChecklist {
         section = "";
         continue;
       }
-      if (!content(line)) continue;
+      if (!content(line) || !rules.countable(line)) continue;
       for (String id : List.of("Мама", "Утро", "День", "Вечер", "Перекусы"))
         if (tag(line, id)) completed.add(id);
       if (section.equals("notes")) notes++;

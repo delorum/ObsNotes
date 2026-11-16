@@ -36,6 +36,7 @@ public final class MainActivity extends AppCompatActivity {
   private String vault = "", path = "", screen = "day", lastError;
   private LocalDate day = LocalDate.now();
   private Markdown template = new Markdown(""), document;
+  private DayContentRules contentRules = DayContentRules.EMPTY;
   private EditorState editor;
   private boolean busy = false, connected = false;
   private boolean foreground = false, conflictPending = false;
@@ -180,6 +181,7 @@ public final class MainActivity extends AppCompatActivity {
       VaultRepository repository,
       DiaryIndex index,
       DiaryIndex.Opened opened,
+      DayContentRules rules,
       VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
@@ -203,12 +205,13 @@ public final class MainActivity extends AppCompatActivity {
             conflict = changed;
           }
           DiaryIndex next = new DiaryIndex();
-          return new Loaded(s, r, next, next.open(s, day), conflict);
+          return new Loaded(s, r, next, next.open(s, day), DayContentRules.load(s), conflict);
         },
         loaded -> {
           storage = loaded.storage;
           repository = loaded.repository;
           template = loaded.opened.template();
+          contentRules = loaded.rules;
           document = loaded.opened.document();
           path = loaded.opened.path();
           vault = value;
@@ -274,6 +277,8 @@ public final class MainActivity extends AppCompatActivity {
               try {
                 DayNavigation.Result result =
                     DayNavigation.open(selectedStorage, current, requested);
+                DayContentRules rules =
+                    result.opened() ? DayContentRules.load(selectedStorage) : null;
                 runOnUiThread(
                     () -> {
                       if (isDestroyed()
@@ -293,6 +298,7 @@ public final class MainActivity extends AppCompatActivity {
                       day = result.view().date();
                       path = result.view().path();
                       document = result.view().document();
+                      contentRules = rules;
                       lastError = null;
                       showDay();
                     });
@@ -352,6 +358,7 @@ public final class MainActivity extends AppCompatActivity {
         day,
         document,
         template,
+        contentRules,
         connected,
         expanded,
         sectionQuery,
@@ -939,7 +946,7 @@ public final class MainActivity extends AppCompatActivity {
     SafVaultStorage selectedStorage = storage;
     if (checklistContext != null && checklistPath.equals(path)) {
       // Keep the table height stable during refresh; recompute facts from the new document now.
-      loaded.accept(DailyChecklist.rows(snapshot, checklistContext));
+      loaded.accept(DailyChecklist.rows(snapshot, checklistContext, contentRules));
       if (checklistText.equals(snapshot.text)) return;
     }
     io.execute(
@@ -955,7 +962,7 @@ public final class MainActivity extends AppCompatActivity {
                     checklistContext = context;
                     checklistPath = selectedPath;
                     checklistText = snapshot.text;
-                    loaded.accept(DailyChecklist.rows(snapshot, context));
+                    loaded.accept(DailyChecklist.rows(snapshot, context, contentRules));
                   }
                 });
           } catch (Exception error) {

@@ -45,6 +45,7 @@ public final class DayScreen {
       LocalDate date,
       Markdown document,
       Markdown template,
+      DayContentRules rules,
       boolean connected,
       Set<String> expanded,
       String query,
@@ -88,7 +89,7 @@ public final class DayScreen {
       ui.error(DayNavigation.NOT_FOUND);
       return;
     }
-    var outline = DayOutline.sections(document, template);
+    var outline = DayOutline.sections(document, template, rules);
     var catalog = new Routing.Catalog(document, template);
     EditText search = ui.field(ui.body, "Поиск разделов", query, false, null);
     search.setTag("section-search");
@@ -153,6 +154,8 @@ public final class DayScreen {
       Map<String, android.view.View> headers,
       Consumer<String> reveal) {
     String heading = section.heading();
+    // Search can match a parent and its child; render each visible heading once.
+    if (headers.containsKey(heading)) return;
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
     headers.put(heading, card);
     boolean open = expanded.contains(heading);
@@ -162,15 +165,12 @@ public final class DayScreen {
           if (populated[0]) return;
           populated[0] = true;
           if (heading.equals("## Чеклист")) ChecklistTable.add(ui, content, actions, reveal);
-          for (var b : section.blocks())
-            DayBlockView.add(
-                ui, content, b, CrossReferences.clean(b.text()), false, expanded, actions);
-          for (var p : section.projections())
-            DayBlockView.add(ui, content, p.origin(), p.text(), true, expanded, actions);
+          for (var item : section.items()) DayBlockView.add(ui, content, item, expanded, actions);
           for (var child : section.children())
             section(ui, content, child, expanded, actions, headers, reveal);
-          if (section.count() == 0 && section.children().isEmpty() && !heading.equals("## Чеклист"))
-            content.addView(ui.text("Пусто", 14, Ui.MUTED));
+          if (section.items().isEmpty()
+              && section.children().isEmpty()
+              && !heading.equals("## Чеклист")) content.addView(ui.text("Пусто", 14, Ui.MUTED));
         };
     var disclosure =
         ui.icon(

@@ -12,21 +12,27 @@ final class DayBlockView {
   static void add(
       Ui ui,
       LinearLayout parent,
-      Markdown.Block block,
-      String text,
-      boolean projection,
+      DayContentRules.Item item,
       Set<String> expanded,
       DayScreen.Actions actions) {
+    Markdown.Block block = item.original();
+    String text = item.view().text();
+    boolean projection = item.projection();
     LinearLayout box = ui.column();
     FrameLayout frame = SwipeToDelete.wrap(ui, box);
     List<View> gestures = new ArrayList<>();
     var tasks = DiaryTasks.in(block.text(), block.start());
     if (!tasks.isEmpty()
-        && (!projection
-            || text.lines().anyMatch(line -> DiaryTasks.projectedLine(tasks, line).isPresent()))) {
+        && item.view().lines().stream()
+            .anyMatch(
+                line ->
+                    projection
+                        ? DiaryTasks.projectedLine(tasks, line.text()).isPresent()
+                        : tasks.stream()
+                            .anyMatch(t -> t.start() == block.start() + line.start()))) {
       Map<Integer, DiaryTasks.Task> byOffset = new HashMap<>();
       for (var task : tasks) byOffset.put(task.start(), task);
-      for (var line : MarkdownLines.scan(projection ? text : block.text())) {
+      for (var line : item.view().lines()) {
         if (line.text().isBlank()) continue;
         var task =
             projection
