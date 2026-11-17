@@ -633,10 +633,11 @@ public final class MainActivity extends AppCompatActivity {
         ui,
         "Разделы",
         choices,
-        catalog::searchLabel,
+        catalog::pickerLabel,
         true,
         form.pickerRoutes(),
         choicesToCheck -> validatePartRoutes(form, choicesToCheck),
+        catalog::searchLabel,
         selected -> {
           try {
             form.applyRoutes(selected, catalog);
@@ -688,10 +689,11 @@ public final class MainActivity extends AppCompatActivity {
         ui,
         index == 0 ? "Основной раздел" : "Дополнительный раздел",
         choices,
-        catalog::searchLabel,
+        catalog::pickerLabel,
         false,
         List.of(current),
         selected -> validatePartRoutes(form, form.replacingRoute(index, selected.get(0))),
+        catalog::searchLabel,
         selected -> {
           form.replaceRoute(index, selected.get(0), catalog);
           recovery.save(editor, vault);
@@ -804,11 +806,6 @@ public final class MainActivity extends AppCompatActivity {
         });
   }
 
-  private List<Events.Root> roots() throws IOException {
-    Markdown current = index.read(storage, editor.sourcePath);
-    return index.roots(editor.sourcePath, current, editor.fresh ? -1 : editor.start);
-  }
-
   private record RootSelection(Events.Root root, String snapshot) {}
 
   private void pickRoot(String replacing) {
@@ -816,7 +813,7 @@ public final class MainActivity extends AppCompatActivity {
     EditorState form = editor.activePart();
     int part = editor.parts == null ? -1 : editor.parts.selected;
     work(
-        this::roots,
+        () -> index.roots(storage, form),
         list ->
             SearchPicker.show(
                 ui,
@@ -828,18 +825,7 @@ public final class MainActivity extends AppCompatActivity {
                     work(
                         () -> {
                           Events.Root root = selected.get(0);
-                          String snapshot = index.read(storage, root.path()).text;
-                          if (root.path().equals(editor.sourcePath)
-                              && !snapshot.equals(editor.sourceSnapshot))
-                            throw new VaultRepository.Conflict(root.path());
-                          if (new Markdown(snapshot)
-                              .blocks.stream()
-                                  .noneMatch(
-                                      block ->
-                                          block.start() == root.block().start()
-                                              && block.text().equals(root.block().text())))
-                            throw new VaultRepository.Conflict(root.path());
-                          return new RootSelection(root, snapshot);
+                          return new RootSelection(root, index.rootSnapshot(storage, form, root));
                         },
                         choice -> {
                           try {

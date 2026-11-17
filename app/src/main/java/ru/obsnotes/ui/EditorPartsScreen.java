@@ -124,16 +124,7 @@ final class EditorPartsScreen {
             card.setVisibility(
                 chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
             if (form.kind == Markdown.Kind.TASK) {
-              Chip withText = EditorScreen.chip(ui, "С текстом", Ui.INK);
-              withText.setCloseIconVisible(false);
-              withText.setCheckable(true);
-              withText.setChecked(form.appendTaskText);
-              withText.setOnCheckedChangeListener(
-                  (v, checked) -> {
-                    form.appendTaskText = checked;
-                    scoped.changed();
-                  });
-              chips.addView(withText);
+              chips.addView(TaskTextMode.button(ui, form, scoped::changed));
             }
           }
           updateActive.run();

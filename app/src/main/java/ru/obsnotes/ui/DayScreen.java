@@ -130,7 +130,16 @@ public final class DayScreen {
           results.removeAllViews();
           headers.clear();
           for (var section : DayOutline.search(outline, catalog, search.getText().toString()))
-            section(ui, results, section, expanded, actions, headers, reveal);
+            section(
+                ui,
+                results,
+                section,
+                expanded,
+                actions,
+                headers,
+                reveal,
+                catalog,
+                search.getText().toString());
           if (results.getChildCount() == 0)
             results.addView(ui.text("Разделы не найдены", 14, Ui.MUTED));
         };
@@ -154,22 +163,29 @@ public final class DayScreen {
       Set<String> expanded,
       Actions actions,
       Map<String, android.view.View> headers,
-      Consumer<String> reveal) {
+      Consumer<String> reveal,
+      Routing.Catalog catalog,
+      String query) {
     String heading = section.heading();
     // Search can match a parent and its child; render each visible heading once.
     if (headers.containsKey(heading)) return;
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
     headers.put(heading, card);
     boolean open = expanded.contains(heading);
+    var fields = catalog.matchingFields(heading, query);
+    Set<Integer> fieldBlocks = new HashSet<>();
+    for (var field : fields) fieldBlocks.add(field.block().start());
     boolean[] populated = {false};
     Runnable populate =
         () -> {
           if (populated[0]) return;
           populated[0] = true;
           if (heading.equals("## Чеклист")) ChecklistTable.add(ui, content, actions, reveal);
-          for (var item : section.items()) DayBlockView.add(ui, content, item, expanded, actions);
+          for (var item : section.items())
+            if (item.projection() || !fieldBlocks.contains(item.original().start()))
+              DayBlockView.add(ui, content, item, expanded, actions);
           for (var child : section.children())
-            section(ui, content, child, expanded, actions, headers, reveal);
+            section(ui, content, child, expanded, actions, headers, reveal, catalog, query);
           if (section.items().isEmpty()
               && section.children().isEmpty()
               && !heading.equals("## Чеклист")) content.addView(ui.text("Пусто", 14, Ui.MUTED));
@@ -211,6 +227,14 @@ public final class DayScreen {
     header.setOnClickListener(v -> toggle.run());
     disclosure.setOnClickListener(v -> toggle.run());
     card.addView(header);
+    for (var field : fields) {
+      TextView result = ui.text(field.label(), 15, Ui.INK);
+      result.setMinHeight(ui.dp(48));
+      result.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      result.setContentDescription("Dataview: " + field.label());
+      result.setOnClickListener(v -> actions.edit(field.block()));
+      card.addView(result);
+    }
     LinearLayout.LayoutParams contentLayout = new LinearLayout.LayoutParams(-1, -2);
     contentLayout.topMargin = ui.dp(8);
     card.addView(content, contentLayout);

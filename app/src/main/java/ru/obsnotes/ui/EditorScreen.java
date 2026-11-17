@@ -1,7 +1,6 @@
 package ru.obsnotes.ui;
 
 import android.widget.*;
-import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import java.util.*;
@@ -158,19 +157,14 @@ public final class EditorScreen {
         ui.button(
             RelativeDates.label(state.destinationPath, state.sourcePath), actions::destination));
     if (state.kind == Markdown.Kind.TASK && !state.taskAppend) {
-      MaterialCheckBox text = new MaterialCheckBox(ui.activity);
-      text.setText("С текстом");
-      text.setTextColor(Ui.INK);
-      text.setMinHeight(ui.dp(48));
-      text.setChecked(state.appendTaskText);
-      text.setContentDescription("Добавлять текст в задачу");
-      text.setOnCheckedChangeListener(
-          (v, checked) -> {
-            state.appendTaskText = checked;
-            actions.changed();
-            hint.setText(hint(state));
-          });
-      dates.addView(text);
+      dates.addView(
+          TaskTextMode.button(
+              ui,
+              state,
+              () -> {
+                actions.changed();
+                hint.setText(hint(state));
+              }));
     }
     ui.body.addView(dates);
     LinearLayout tags = ui.row();

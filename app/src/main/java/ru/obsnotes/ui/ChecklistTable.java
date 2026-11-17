@@ -19,14 +19,17 @@ final class ChecklistTable {
         rows -> {
           table.removeAllViews();
           LinearLayout header = ui.row();
+          header.setGravity(android.view.Gravity.TOP);
           ui.weighted(header, ui.bold("Раздел", 14, Ui.INK));
           ui.weighted(header, ui.bold("Статус", 14, Ui.INK));
           table.addView(header);
           for (var row : rows) {
             LinearLayout cells = ui.row();
+            cells.setGravity(android.view.Gravity.TOP);
+            cells.setContentDescription("Строка чеклиста " + row.label());
             TextView label = ui.text(row.label(), 14, Ui.INK);
-            label.setMinHeight(ui.dp(40));
-            ui.weighted(cells, label);
+            label.setContentDescription("Раздел чеклиста " + row.label());
+            cell(ui, cells, label);
             SpannableStringBuilder value = new SpannableStringBuilder();
             for (var part : row.status()) {
               if (value.length() > 0) value.append(" | ");
@@ -40,7 +43,9 @@ final class ChecklistTable {
             }
             TextView status = ui.text("", 14, Ui.INK);
             status.setText(value);
-            ui.weighted(cells, status);
+            status.setStateDescription(value.toString());
+            status.setContentDescription("Статус чеклиста " + row.label());
+            cell(ui, cells, status);
             if (!row.heading().isEmpty()) {
               cells.setOnClickListener(v -> reveal.accept(row.heading()));
               label.setOnClickListener(v -> reveal.accept(row.heading()));
@@ -54,5 +59,11 @@ final class ChecklistTable {
           loading.setTextColor(Ui.RED);
           if (loading.getParent() == null) table.addView(loading);
         });
+  }
+
+  private static void cell(Ui ui, LinearLayout row, TextView text) {
+    text.setMinHeight(ui.dp(40));
+    text.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+    row.addView(text, new LinearLayout.LayoutParams(0, -1, 1));
   }
 }

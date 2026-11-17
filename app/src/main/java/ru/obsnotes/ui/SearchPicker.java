@@ -47,6 +47,33 @@ public final class SearchPicker {
       Function<List<T>, String> validate,
       boolean replaceOnLabel,
       Consumer<List<T>> select) {
+    show(ui, title, items, label, multi, initial, validate, replaceOnLabel, label, select);
+  }
+
+  public static <T> void show(
+      Ui ui,
+      String title,
+      List<T> items,
+      Function<T, String> label,
+      boolean multi,
+      List<T> initial,
+      Function<List<T>, String> validate,
+      Function<T, String> searchLabel,
+      Consumer<List<T>> select) {
+    show(ui, title, items, label, multi, initial, validate, false, searchLabel, select);
+  }
+
+  private static <T> void show(
+      Ui ui,
+      String title,
+      List<T> items,
+      Function<T, String> label,
+      boolean multi,
+      List<T> initial,
+      Function<List<T>, String> validate,
+      boolean replaceOnLabel,
+      Function<T, String> searchLabel,
+      Consumer<List<T>> select) {
     LinearLayout layout = ui.column();
     layout.setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(8));
     PickerSelection<T> selection = new PickerSelection<>(initial);
@@ -142,7 +169,7 @@ public final class SearchPicker {
         () -> {
           filtered.clear();
           String query = search.getText().toString();
-          filtered.addAll(FuzzySearch.ranked(items, query, label));
+          filtered.addAll(FuzzySearch.ranked(items, query, searchLabel));
           adapter.notifyDataSetChanged();
         };
     ui.watch(search, value -> filter.run());

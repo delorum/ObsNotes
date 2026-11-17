@@ -43,6 +43,31 @@ public final class DiaryIndex {
     return document;
   }
 
+  public List<Events.Root> roots(VaultStorage storage, EditorState form) throws IOException {
+    String selected = form.destinationPath;
+    Markdown current = read(storage, selected);
+    int except = !form.fresh && selected.equals(form.sourcePath) ? form.start : -1;
+    return roots(selected, current, except);
+  }
+
+  public String rootSnapshot(VaultStorage storage, EditorState form, Events.Root root)
+      throws IOException {
+    if (!root.path().equals(form.destinationPath))
+      throw new IllegalArgumentException("Выбранная дата изменилась");
+    String snapshot = read(storage, root.path()).text;
+    if (root.path().equals(form.sourcePath) && !snapshot.equals(form.sourceSnapshot)
+        || !snapshot.equals(form.destinationSnapshot))
+      throw new VaultRepository.Conflict(root.path());
+    if (new Markdown(snapshot)
+        .blocks.stream()
+            .noneMatch(
+                block ->
+                    block.start() == root.block().start()
+                        && block.text().equals(root.block().text())))
+      throw new VaultRepository.Conflict(root.path());
+    return snapshot;
+  }
+
   public List<Events.Root> roots(String path, Markdown document, int exceptStart) {
     List<Events.Root> list = new ArrayList<>();
     for (var b : document.blocks) {

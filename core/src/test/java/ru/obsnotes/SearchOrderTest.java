@@ -76,7 +76,7 @@ public class SearchOrderTest {
   }
 
   @Test
-  public void fieldSearchDoesNotIndexValuesCodeFrontmatterOrUnrelatedSections() {
+  public void fieldSearchIndexesCurrentValuesButNotCodeFrontmatterOrUnrelatedSections() {
     var doc =
         new Markdown(
             "---\n"
@@ -89,8 +89,9 @@ public class SearchOrderTest {
                 + "```\n"
                 + "## Прочее\n"
                 + "Другое:: 3\n");
-    for (String query : List.of("уникально", "Пример", "Секрет"))
+    for (String query : List.of("Пример", "Секрет"))
       assertTrue(query, DayOutline.search(doc, doc, query).isEmpty());
+    assertEquals("## Погода", DayOutline.search(doc, doc, "уникально").get(0).heading());
     var found = DayOutline.search(doc, doc, "температура");
     assertEquals(1, found.size());
     assertEquals("## Погода", found.get(0).heading());

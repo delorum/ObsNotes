@@ -25,8 +25,26 @@ public final class Routing {
 
   public record Token(String text, Choice choice) {}
 
+  public record FieldHit(String heading, String key, String value, Markdown.Block block) {
+    public String label() {
+      return key + "::" + (value.isEmpty() ? "" : " " + value);
+    }
+
+    public String searchLabel() {
+      return key + "\n" + value;
+    }
+  }
+
+  private static String fieldLabel(Markdown.Target target) {
+    var match = Markdown.FIELD.matcher(target.source());
+    if (!match.matches()) return target.label();
+    String value = CrossReferences.clean(match.group(2).strip());
+    return match.group(1) + "::" + (value.isEmpty() ? "" : " " + value);
+  }
+
   public static final class Catalog {
     public final List<Choice> choices;
+    private final List<FieldHit> fields = new ArrayList<>();
     private final Map<String, Choice> canonical = new LinkedHashMap<>();
     private final Map<String, List<String>> aliases = new LinkedHashMap<>();
     private final Map<String, String> sectionLabels = new LinkedHashMap<>();
@@ -56,6 +74,24 @@ public final class Routing {
                   .computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>())
                   .add(field.key());
       }
+      for (var field : InlineFields.all(destination)) {
+        var section =
+            destination.sections.stream()
+                .filter(row -> field.start() >= row.body() && field.start() < row.end())
+                .findFirst()
+                .orElse(null);
+        var block =
+            destination.blocks.stream()
+                .filter(row -> field.start() >= row.start() && field.start() < row.end())
+                .findFirst()
+                .orElse(null);
+        if (section == null || block == null) continue;
+        String value = CrossReferences.clean(field.value());
+        fields.add(new FieldHit(section.heading(), field.key(), value, block));
+        termsBySection
+            .computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>())
+            .add(value);
+      }
       for (var task : DiaryTasks.in(destination.text, 0))
         for (var section : destination.sections)
           if (task.start() >= section.body() && task.start() < section.end()) {
@@ -75,7 +111,7 @@ public final class Routing {
     }
 
     /**
-     * Search names, aliases, field keys and current diary task text, without ordinary note values.
+     * Search names, aliases, field keys/current values and diary tasks, without ordinary note text.
      */
     public String sectionSearchLabel(String heading) {
       return sectionLabels.getOrDefault(heading, heading);
@@ -92,13 +128,40 @@ public final class Routing {
           .orElse(new Choice(target, ""));
     }
 
-    public String searchLabel(Choice choice) {
+    public List<FieldHit> matchingFields(String heading, String query) {
+      if (query.isBlank()) return List.of();
+      return FuzzySearch.ranked(
+          fields.stream().filter(field -> field.heading().equals(heading)).toList(),
+          query,
+          FieldHit::searchLabel);
+    }
+
+    public String pickerLabel(Choice choice) {
+      if (choice.target().kind() == Markdown.Kind.FIELD)
+        return choice.target().heading().replaceFirst("^#+ +", "")
+            + " / "
+            + fieldLabel(choice.target());
       String label =
           choice.target().kind() == Markdown.Kind.SECTION
               ? choice.label()
               : choice.target().label();
       var ids = aliases.getOrDefault(choice.target().heading(), List.of());
       return label + (ids.isEmpty() ? "" : "\n" + String.join(", ", ids));
+    }
+
+    public String searchLabel(Choice choice) {
+      if (choice.target().kind() == Markdown.Kind.FIELD) {
+        var match = Markdown.FIELD.matcher(choice.target().source());
+        if (match.matches())
+          return pickerLabel(choice)
+              + "\n"
+              + match.group(1)
+              + "\n"
+              + CrossReferences.clean(match.group(2).strip())
+              + "\n"
+              + String.join(", ", aliases.getOrDefault(choice.target().heading(), List.of()));
+      }
+      return pickerLabel(choice);
     }
 
     public List<Token> split(String ids) {
