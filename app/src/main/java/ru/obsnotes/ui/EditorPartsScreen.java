@@ -16,6 +16,25 @@ final class EditorPartsScreen {
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
     EditText input = ui.field(ui.body, "Текст", owner.editableText(), true, null);
+    SecretInput.protect(input);
+    var lock =
+        ui.icon(
+            ru.obsnotes.R.drawable.ic_unlock,
+            "Зашифровать часть",
+            () -> {
+              owner.cursor = Math.max(0, input.getSelectionStart());
+              actions.part(owner.parts.selectAt(owner.cursor));
+              actions.secret();
+            });
+
+    Runnable updateLock =
+        () -> {
+          int index = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
+          boolean locked = owner.parts.parts.get(index).form().locked();
+          lock.setIconResource(
+              locked ? ru.obsnotes.R.drawable.ic_lock : ru.obsnotes.R.drawable.ic_unlock);
+          lock.setContentDescription(locked ? "Расшифровать часть" : "Зашифровать часть");
+        };
     LinearLayout panels = ui.column();
     ui.body.addView(panels);
     Routing.Catalog catalog = owner.routingCatalog(template);
@@ -23,6 +42,7 @@ final class EditorPartsScreen {
     Runnable[] render = new Runnable[1];
     Runnable updateActive =
         () -> {
+          updateLock.run();
           int at = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
           for (int i = 0; i < cards.size(); i++) {
             boolean active = cards.size() > 1 && i == at;
@@ -180,6 +200,7 @@ final class EditorPartsScreen {
                   (d, which) -> actions.tags(which == 1, true, owner.activePart().cursor))
               .show();
         });
+    tools.addView(lock, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
     ui.body.addView(tools);
     LinearLayout relations = ui.row();
     ui.weighted(
@@ -219,6 +240,7 @@ final class EditorPartsScreen {
     var text = input.getText();
     for (var span : text.getSpans(0, text.length(), android.text.style.ForegroundColorSpan.class))
       text.removeSpan(span);
+    SecretInput.decorate(text);
     if (!owner.parts.error.isEmpty()) return;
     for (var mark : LineMarks.of(owner.editableText(), owner.tags())) {
       int start = Math.min(text.length(), mark.start()), end = Math.min(text.length(), mark.end());
@@ -302,6 +324,11 @@ final class EditorPartsScreen {
     public void deleteRoot() {
       select.run();
       parent.deleteRoot();
+    }
+
+    public void secret() {
+      select.run();
+      parent.secret();
     }
 
     public void related() {

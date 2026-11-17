@@ -20,6 +20,11 @@ public final class MainActivity extends AppCompatActivity {
   private SharedPreferences prefs;
   private EditorRecovery recovery;
   private UsageHistory usage;
+  private PasswordStore passwords;
+  private final Runnable expirePassword =
+      () -> {
+        if (passwords != null) passwords.close();
+      };
   private SafVaultStorage storage;
   private VaultRepository repository;
   private DiaryIndex index = new DiaryIndex();
@@ -43,6 +48,7 @@ public final class MainActivity extends AppCompatActivity {
 
   private TaskViewport taskViewport;
   private boolean busy = false, connected = false;
+  private volatile boolean destroying;
   private boolean foreground = false, conflictPending = false;
   private android.app.Dialog conflictDialog;
   private String sectionQuery = "";
@@ -75,6 +81,7 @@ public final class MainActivity extends AppCompatActivity {
     prefs = getSharedPreferences("obsnotes", MODE_PRIVATE);
     recovery = new EditorRecovery(prefs);
     usage = new UsageHistory(prefs);
+    passwords = new PasswordStore(prefs);
     vault = prefs.getString("vault", "");
     if (saved != null) {
       day = LocalDate.parse(saved.getString("day", LocalDate.now().toString()));
@@ -114,7 +121,10 @@ public final class MainActivity extends AppCompatActivity {
         && connected
         && screen.equals("editor")
         && !busy
-        && (conflictDialog == null || !conflictDialog.isShowing())) saveEditor();
+        && (conflictDialog == null || !conflictDialog.isShowing())) {
+      if (editor.sensitive || SecretText.has(editor.original)) recovery.save(editor, vault);
+      else saveEditor();
+    }
     super.onPause();
   }
 
@@ -128,7 +138,9 @@ public final class MainActivity extends AppCompatActivity {
 
   @Override
   protected void onDestroy() {
+    destroying = true;
     cancelWeather();
+    passwords.close();
     weatherIo.shutdownNow();
     if (conflictDialog != null) conflictDialog.dismiss();
     handler.removeCallbacksAndMessages(null);
@@ -189,6 +201,8 @@ public final class MainActivity extends AppCompatActivity {
       VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
+    passwords.close();
+    handler.removeCallbacks(expirePassword);
     cancelWeather();
     checklistContext = null;
     cancelNavigation();
@@ -593,6 +607,10 @@ public final class MainActivity extends AppCompatActivity {
 
           public void related() {
             showRelations();
+          }
+
+          public void secret() {
+            toggleSecret();
           }
 
           public void weatherLocation() {
@@ -1183,6 +1201,81 @@ public final class MainActivity extends AppCompatActivity {
     if (error != null) ui.error(error);
   }
 
+  private void changePassword(int operation) {
+    if (busy) return;
+    String selectedVault = vault;
+    PasswordDialogs.settings(
+        ui,
+        operation,
+        (first, second) ->
+            work(
+                () -> {
+                  if (operation == 0) passwords.create(selectedVault, first, second);
+                  else if (operation == 1 || operation == 2)
+                    passwords.change(selectedVault, first, second, operation == 1);
+                  else passwords.delete(selectedVault, first);
+                  return true;
+                },
+                ok -> {
+                  handler.removeCallbacks(expirePassword);
+                  showSettings();
+                }));
+  }
+
+  private void toggleSecret() {
+    if (busy || editor == null) return;
+    if (!passwords.exists(vault)) {
+      ui.error("Сначала создайте пароль в настройках");
+      return;
+    }
+    EditorState owner = editor;
+    int part = owner.parts == null ? -1 : owner.parts.selected;
+    Runnable apply =
+        () -> {
+          char[] password = passwords.session.copy();
+          if (password == null) {
+            ui.error("Введите PIN снова");
+            return;
+          }
+          work(
+              () -> {
+                try {
+                  if (owner.parts != null) owner.parts.toggleSecret(part, password);
+                  else owner.toggleSecret(password, template);
+                  recovery.save(owner, vault);
+                  return true;
+                } finally {
+                  Arrays.fill(password, '\0');
+                }
+              },
+              ok -> {
+                if (editor == owner) showEditor();
+              });
+        };
+    char[] cached = passwords.session.copy();
+    if (cached != null) {
+      Arrays.fill(cached, '\0');
+      apply.run();
+      return;
+    }
+    String selectedVault = vault;
+    PasswordDialogs.pin(
+        ui,
+        "PIN шифрования",
+        pin ->
+            work(
+                () -> {
+                  passwords.unlock(selectedVault, pin);
+                  if (destroying || isDestroyed()) passwords.close();
+                  return true;
+                },
+                ok -> {
+                  handler.removeCallbacks(expirePassword);
+                  handler.postDelayed(expirePassword, passwords.session.remaining());
+                  if (editor == owner && vault.equals(selectedVault)) apply.run();
+                }));
+  }
+
   private void showSettings() {
     cancelNavigation();
     screen = "settings";
@@ -1194,6 +1287,7 @@ public final class MainActivity extends AppCompatActivity {
         ui,
         folder,
         repository != null,
+        passwords.exists(vault),
         new SettingsScreen.Actions() {
           public void back() {
             home();
@@ -1210,6 +1304,10 @@ public final class MainActivity extends AppCompatActivity {
                   return true;
                 },
                 ok -> home());
+          }
+
+          public void password(int operation) {
+            changePassword(operation);
           }
 
           public void keepFiles() {

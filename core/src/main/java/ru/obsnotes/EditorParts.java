@@ -88,7 +88,12 @@ public final class EditorParts {
         boolean mappedContent = map.applyAsInt(origin.end()) > mapStart.applyAsInt(origin.start());
         boolean first = (!inferred || !mappedContent) && used.add(origin.form());
         if (!first) {
+          boolean opened = form.secretOpen;
           form.clearEventMetadata();
+          if (opened) {
+            form.text = SecretText.opened(form.text);
+            form.secretOpen = true;
+          }
           form.partId = UUID.randomUUID().toString();
         }
         // Block-level destinations follow a split. Per-line/person tags follow their characters.
@@ -244,6 +249,18 @@ public final class EditorParts {
       if (!part.form().parentLinks().stream().map(Events.Leading::raw).toList().equals(raw))
         part.form().text = Events.withLinks(part.form().text, raw);
     }
+  }
+
+  public void toggleSecret(int index, char[] password) {
+    if (!error.isEmpty()) throw new IllegalArgumentException(error);
+    boolean wasLocked = parts.get(index).form().locked();
+    parts.get(index).form().toggleSecret(password, template);
+    owner.sensitive = true;
+    sync();
+    int caret = parts.get(index).end();
+    if (wasLocked && ranges(parts.get(index).form().editableText()).size() > 1) edit(value);
+    owner.cursor = Math.min(caret, value.length());
+    selected = partAt(owner.cursor);
   }
 
   public List<EventLink> references(int index) {

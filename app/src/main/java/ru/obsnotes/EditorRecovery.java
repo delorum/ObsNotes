@@ -16,8 +16,21 @@ public final class EditorRecovery {
       if (s.parts != null) s.parts.sync();
       JSONObject j = encode(s);
       j.put("vault", vault);
+      boolean sensitive =
+          s.sensitive
+              || SecretText.has(s.sourceSnapshot)
+              || SecretText.has(s.text)
+              || s.parts != null
+                  && s.parts.parts.stream()
+                      .anyMatch(part -> part.form().sensitive || SecretText.has(part.form().text));
+      if (sensitive) {
+        JSONObject envelope = new JSONObject();
+        envelope.put("vault", vault);
+        envelope.put("sealed", new RecoveryCipher().seal(j.toString()));
+        j = envelope;
+      }
       prefs.edit().putString(key(vault), j.toString()).remove(legacyKey(vault)).apply();
-    } catch (JSONException e) {
+    } catch (JSONException | java.security.GeneralSecurityException e) {
       throw new IllegalStateException(e);
     }
   }
@@ -28,8 +41,10 @@ public final class EditorRecovery {
     try {
       JSONObject j = new JSONObject(value);
       if (!j.getString("vault").equals(vault)) return null;
+      if (j.has("sealed")) j = new JSONObject(new RecoveryCipher().open(j.getString("sealed")));
+      if (!j.getString("vault").equals(vault)) return null;
       return decode(j);
-    } catch (JSONException | IllegalArgumentException e) {
+    } catch (JSONException | IllegalArgumentException | java.security.GeneralSecurityException e) {
       return null;
     }
   }
@@ -37,6 +52,10 @@ public final class EditorRecovery {
   private JSONObject encode(EditorState s) throws JSONException {
     JSONObject j = new JSONObject();
 
+    j.put("secretOpen", s.secretOpen);
+    j.put("sensitive", s.sensitive);
+    j.put("secretBefore", s.secretBefore);
+    j.put("secretClear", s.secretClear);
     j.put("initialRevision", s.initialRevision);
     j.put("removedRootBefore", s.removedRootBefore);
     j.put("removedRootAfter", s.removedRootAfter);
@@ -141,6 +160,10 @@ public final class EditorRecovery {
 
   private EditorState decode(JSONObject j) throws JSONException {
     EditorState s = new EditorState();
+    s.secretOpen = j.optBoolean("secretOpen");
+    s.sensitive = j.optBoolean("sensitive");
+    s.secretBefore = j.optString("secretBefore");
+    s.secretClear = j.optString("secretClear");
     s.initialRevision = j.optString("initialRevision");
     s.removedRootBefore = j.optString("removedRootBefore");
     s.removedRootAfter = j.optString("removedRootAfter");

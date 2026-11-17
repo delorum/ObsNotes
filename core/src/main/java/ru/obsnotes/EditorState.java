@@ -26,6 +26,8 @@ public final class EditorState {
   public String initialRevision = "";
   public String partId = UUID.randomUUID().toString();
   public EditorParts parts;
+  public boolean secretOpen, sensitive;
+  public String secretBefore = "", secretClear = "";
   public final Set<Events.Parent> removedRoots = new LinkedHashSet<>();
   public final List<EventLink.RootEdit> rootEdits = new ArrayList<>();
   public String removedRootBefore = "", removedRootAfter = "";
@@ -49,6 +51,10 @@ public final class EditorState {
   public EditorState copy() {
     EditorState s = new EditorState();
     s.partId = partId;
+    s.secretOpen = secretOpen;
+    s.sensitive = sensitive;
+    s.secretBefore = secretBefore;
+    s.secretClear = secretClear;
     s.removedRoots.addAll(removedRoots);
     s.rootEdits.addAll(rootEdits);
     s.removedRootBefore = removedRootBefore;
@@ -83,11 +89,15 @@ public final class EditorState {
   }
 
   void replaceBody(String body) {
-    text = parts().join(body);
+    Parts p = parts();
+    text = p.join(secretOpen ? SecretText.opened(body) : SecretText.edit(p.body, body));
   }
 
   void clearEventMetadata() {
-    text = parts().body;
+    String plainBody = editableBody(parts());
+    secretOpen = false;
+    secretBefore = secretClear = "";
+    text = plainBody;
     rootPath = rootOriginal = rootReplacement = rootSnapshot = "";
     rootEdits.clear();
     removedRoots.clear();
@@ -177,7 +187,9 @@ public final class EditorState {
               && Events.prefix(sourcePath, original).body().isBlank()
               && parts.parts.stream()
                   .anyMatch(part -> !parts.references(parts.parts.indexOf(part)).isEmpty()));
-    return TaggedText.parse(parts().body).clean.isBlank() && !parentOnly();
+    Parts p = parts();
+    return TaggedText.parse(secretOpen ? SecretText.openBody(p.body) : p.body).clean.isBlank()
+        && !parentOnly();
   }
 
   public static EditorState weather(String path, Markdown source) {
@@ -284,13 +296,56 @@ public final class EditorState {
   }
 
   private String editableBody(Parts p) {
-    var fields = FieldBlock.parse(p.body);
-    return editFields && fields.present() ? fields.values() : p.body;
+    String body = secretOpen ? SecretText.openBody(p.body) : p.body;
+    var fields = FieldBlock.parse(body);
+    return editFields && fields.present() ? fields.values() : body;
+  }
+
+  private String joinVisible(Parts p, String visible) {
+    return joinEditable(p, SecretText.edit(editableBody(p), visible));
+  }
+
+  public boolean locked() {
+    return SecretText.has(parts().body);
+  }
+
+  public void toggleSecret(char[] password, Markdown template) {
+    if (kind != Markdown.Kind.SECTION || editFields || taskAppend || weatherForm)
+      throw new IllegalArgumentException("Шифрование доступно для текстовых блоков в разделах");
+    Parts p = parts();
+    String body = editableBody(p);
+    if (body.isBlank() && secretBefore.isEmpty())
+      throw new IllegalArgumentException("Сначала введите текст");
+    if (locked()) {
+      String clear = SecretText.decrypt(p.body, password);
+      secretBefore = p.body;
+      secretClear = clear;
+      secretOpen = true;
+      sensitive = true;
+      text = p.join(SecretText.opened(clear));
+      routesInitialized = false;
+      initializeRoutes(template);
+    } else {
+      String encrypted = "";
+      if (!secretBefore.isEmpty() && body.equals(secretClear)) {
+        try {
+          if (SecretText.decrypt(secretBefore, password).equals(body)) encrypted = secretBefore;
+        } catch (IllegalArgumentException differentPassword) {
+          /* Re-encrypt with the new password. */
+        }
+      }
+      if (encrypted.isEmpty()) encrypted = "`secret " + InlineCrypto.encrypt(body, password) + "`";
+      text = p.join(encrypted);
+      secretBefore = secretClear = "";
+      secretOpen = false;
+      sensitive = true;
+    }
   }
 
   private String joinEditable(Parts p, String raw) {
     var fields = FieldBlock.parse(p.body);
-    return p.join(editFields && fields.present() ? fields.withValues(raw) : raw);
+    String value = editFields && fields.present() ? fields.withValues(raw) : raw;
+    return p.join(secretOpen ? SecretText.opened(value) : value);
   }
 
   public int fieldCount() {
@@ -317,12 +372,12 @@ public final class EditorState {
 
   public String editableText() {
     if (parts != null) return parts.value;
-    return TaggedText.parse(editableBody(parts())).clean;
+    return TaggedText.parse(SecretText.display(editableBody(parts()))).clean;
   }
 
   public List<TaggedText.Tag> tags() {
     if (parts != null) return parts.tags();
-    return TaggedText.parse(editableBody(parts())).tags;
+    return TaggedText.parse(SecretText.display(editableBody(parts()))).tags;
   }
 
   public void edit(String value) {
@@ -332,20 +387,27 @@ public final class EditorState {
     }
     if (taskAppend) value = DiaryTasks.addition(value);
     Parts parts = parts();
-    text = joinEditable(parts, TaggedText.parse(editableBody(parts)).edit(value).render());
+    text =
+        joinVisible(
+            parts, TaggedText.parse(SecretText.display(editableBody(parts))).edit(value).render());
   }
 
   public void addTags(int cursor, Collection<String> ids, boolean oneLine, boolean person) {
     Parts parts = parts();
     text =
-        joinEditable(
+        joinVisible(
             parts,
-            TaggedText.parse(editableBody(parts)).add(cursor, ids, oneLine, person).render());
+            TaggedText.parse(SecretText.display(editableBody(parts)))
+                .add(cursor, ids, oneLine, person)
+                .render());
   }
 
   public void removeTag(int index) {
     Parts parts = parts();
-    text = joinEditable(parts, TaggedText.parse(editableBody(parts)).remove(index).render());
+    text =
+        joinVisible(
+            parts,
+            TaggedText.parse(SecretText.display(editableBody(parts))).remove(index).render());
   }
 
   public List<Events.Leading> parentLinks() {
@@ -445,7 +507,7 @@ public final class EditorState {
 
   public String savedText() {
     Parts parts = parts();
-    TaggedText tags = TaggedText.parse(parts.body);
+    TaggedText tags = TaggedText.parse(secretOpen ? SecretText.openBody(parts.body) : parts.body);
     if (tags.clean.isBlank()) {
       if (parentOnly()) return parts.link.stripTrailing();
       throw new IllegalArgumentException("Введите текст");
@@ -554,7 +616,7 @@ public final class EditorState {
 
   public void replaceTag(int index, List<String> ids, Routing.Catalog catalog) {
     Parts p = parts();
-    TaggedText body = TaggedText.parse(editableBody(p));
+    TaggedText body = TaggedText.parse(SecretText.display(editableBody(p)));
     var old = body.tags.get(index);
     List<String> replacement = new ArrayList<>();
     if (old.kind().equals("crossPeople"))
@@ -563,7 +625,7 @@ public final class EditorState {
     replacement.addAll(ids);
     Set<String> seen = new HashSet<>();
     replacement.removeIf(id -> !seen.add(id.toLowerCase(Locale.ROOT)));
-    text = joinEditable(p, body.replace(index, replacement).render());
+    text = joinVisible(p, body.replace(index, replacement).render());
     if (old.kind().equals("crossPeople")) {
       List<Routing.Choice> next = new ArrayList<>(routes);
       for (var tag : tags())
@@ -579,8 +641,21 @@ public final class EditorState {
 
   /** A conflict copy preserves the visible text, without duplicating anchors or active keys. */
   public String conflictCopyText() {
-    if (parts != null) return FieldBlock.labels(parts.value);
-    String value = FieldBlock.labels(TaggedText.parse(parts().body).clean);
+    if (parts != null) {
+      StringBuilder raw = new StringBuilder();
+      int end = 0;
+      for (var part : parts.parts) {
+        raw.append(parts.baseline, end, part.start());
+        raw.append(part.form().conflictCopyText());
+        end = part.end();
+      }
+      raw.append(parts.baseline.substring(end));
+      return SecretText.edit(raw.toString(), FieldBlock.labels(parts.value));
+    }
+    Parts p = parts();
+    String value =
+        FieldBlock.labels(
+            TaggedText.parse(secretOpen ? SecretText.openBody(p.body) : p.body).clean);
     if (kind == Markdown.Kind.FIELD && !editFields) {
       var field = Markdown.FIELD.matcher(targetSource);
       if (field.matches()) return field.group(1) + ": " + value;
@@ -600,7 +675,7 @@ public final class EditorState {
 
   public void removeUnmanagedTag(int index, Routing.Catalog catalog) {
     Parts p = parts();
-    TaggedText body = TaggedText.parse(editableBody(p));
+    TaggedText body = TaggedText.parse(SecretText.display(editableBody(p)));
     var tag = body.tags.get(index);
     if (!tag.kind().equals("crossPeople")) {
       removeTag(index);
@@ -616,7 +691,7 @@ public final class EditorState {
     List<TaggedText.Tag> tags = new ArrayList<>(body.tags);
     if (known.isEmpty()) tags.remove(index);
     else tags.set(index, new TaggedText.Tag(tag.kind(), known, tag.position()));
-    text = joinEditable(p, body.withTags(tags).render());
+    text = joinVisible(p, body.withTags(tags).render());
   }
 
   public Markdown.Block originalBlock(Markdown document) {

@@ -43,6 +43,8 @@ public final class EditorScreen {
 
     void related();
 
+    void secret();
+
     void weatherLocation();
 
     void fetchWeather();

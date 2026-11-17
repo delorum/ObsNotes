@@ -83,7 +83,7 @@ public final class CrossReferences {
   public static String clean(String text) {
     int callout = text.indexOf("\n> [!info]- Дополнения к событию");
     String content = callout >= 0 ? text.substring(0, callout) : text;
-    content = Events.prefix("", content).body();
+    content = SecretText.display(SecretText.openBody(Events.prefix("", content).body()));
     return content
         .replaceAll("#(?:crossPeople|crossOneLine)/[\\p{L}]+", "")
         .replaceAll("#(?:person|personOneLine)/", "")

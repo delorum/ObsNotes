@@ -38,6 +38,9 @@ public final class EditorRevision {
       }
       if (form.kind == Markdown.Kind.TASK) add(key, form.appendTaskText);
       add(key, form.editableText());
+      var secrets = SecretText.scan(form.text);
+      add(key, secrets.size());
+      for (var secret : secrets) add(key, secret.raw());
       for (int i = 0; i < form.fieldCount(); i++) add(key, form.fieldName(i));
       add(key, form.fieldCount());
       var catalog = form.routingCatalog(template);
@@ -91,7 +94,7 @@ public final class EditorRevision {
     add(key, removed.size());
     for (String root : removed) add(key, root);
     try {
-      return "v2:"
+      return "v3:"
           + Base64.getEncoder()
               .encodeToString(
                   MessageDigest.getInstance("SHA-256")
@@ -107,7 +110,7 @@ public final class EditorRevision {
 
   /** Migrate old recovery records from their original source, never from the current edits. */
   public static void recoverBaseline(EditorState state, Markdown template) {
-    if (state.initialRevision.startsWith("v2:")) return;
+    if (state.initialRevision.startsWith("v3:")) return;
     try {
       Markdown source = new Markdown(state.sourceSnapshot);
       EditorState initial;
