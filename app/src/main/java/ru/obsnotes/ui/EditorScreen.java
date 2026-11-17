@@ -26,8 +26,6 @@ public final class EditorScreen {
 
     void replaceTag(int index);
 
-    void today();
-
     void destination();
 
     void tags(boolean oneLine, boolean person, int cursor);
@@ -69,7 +67,6 @@ public final class EditorScreen {
                             : state.fresh ? "Новая заметка" : "Текстовый блок";
     ui.page(title, actions::back);
     EditorState.InputCaret caret = state.inputCaret();
-    ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
     Routing.Catalog catalog = state.routingCatalog(template);
     ChipGroup metadata = new ChipGroup(ui.activity);

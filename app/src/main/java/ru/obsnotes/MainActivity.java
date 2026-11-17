@@ -557,10 +557,6 @@ public final class MainActivity extends AppCompatActivity {
             pickTagReplacement(index);
           }
 
-          public void today() {
-            MainActivity.this.today();
-          }
-
           public void destination() {
             pickDestination();
           }

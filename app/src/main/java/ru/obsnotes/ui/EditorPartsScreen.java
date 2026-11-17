@@ -13,7 +13,6 @@ final class EditorPartsScreen {
   /** One text field, with every paragraph's routing controls visible at the same time. */
   static void show(Ui ui, EditorState owner, Markdown template, EditorScreen.Actions actions) {
     ui.page(owner.fresh ? "Новая заметка" : "Текстовый блок", actions::back);
-    ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
     EditText input = ui.field(ui.body, "Текст", owner.editableText(), true, null);
     SecretInput.protect(input);
@@ -282,10 +281,6 @@ final class EditorPartsScreen {
     public void replaceTag(int i) {
       select.run();
       parent.replaceTag(i);
-    }
-
-    public void today() {
-      parent.today();
     }
 
     public void destination() {
