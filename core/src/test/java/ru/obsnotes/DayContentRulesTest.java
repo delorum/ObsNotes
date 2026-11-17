@@ -156,12 +156,12 @@ public class DayContentRulesTest {
   }
 
   @Test
-  public void jsKeyExceptionsAndNonemptyPlaceholdersKeepTheirOriginalMeaning() {
+  public void jsKeyExceptionsForBlankValuesRemainButTemplatePromptsAreEmpty() {
     for (String key : List.of("ФотоПогоды", "ShortDescr", "ShortDescrWeek"))
       assertTrue(DayContentRules.EMPTY.countable(key + "::"));
     for (String key : List.of("Вес", "ShortDescrMonth", "ShortDescrYear"))
       assertFalse(DayContentRules.EMPTY.countable(key + "::"));
-    assertTrue(DayContentRules.EMPTY.countable("Погода:: Заполни погоду!"));
+    assertFalse(DayContentRules.EMPTY.countable("Погода:: Заполни тестовое значение!"));
     assertTrue(DayContentRules.EMPTY.countable("- [ ] #task/other action"));
     assertTrue(
         DayContentRules.EMPTY.countable("- [x] #task/dairy/car Ездил на машине ✅ 2026-11-16"));
@@ -254,5 +254,101 @@ public class DayContentRulesTest {
             .findFirst()
             .orElseThrow();
     assertEquals("1", row.status().get(0).text());
+  }
+
+  @Test
+  public void promptValuesAreEmptyForAllKeysIncludingSummaryExceptionsAndRemainVisible() {
+    for (String key :
+        List.of(
+            "Погода",
+            "Температура",
+            "Местоположение",
+            "ShortDescr",
+            "ShortDescrWeek",
+            "ShortDescrMonth",
+            "ShortDescrYear",
+            "ФотоПогоды")) {
+      String line = key + ":: \tЗаполни тестовое значение! #crossPeople/Tasks ^stable";
+      assertTrue(key, DayContentRules.emptyDataviewKey(line));
+      var view = RULES.view(line);
+      assertFalse(key, view.counted());
+      assertEquals(line, view.raw());
+      assertEquals(1, view.lines().size());
+    }
+  }
+
+  @Test
+  public void groupedPromptsCountOnceOnlyWhenAnActualValueIsEnteredWithoutRewritingOtherFields() {
+    var doc =
+        new Markdown(
+            "## Заметки\r\n\r\n"
+                + "Погода:: Заполни тестовое значение!\r\n"
+                + "ShortDescr:: Заполни тестовое описание!\r\n\r\n"
+                + "## Прочее\r\n"
+                + "Tail\r\n");
+    var before = section(doc, "## Заметки");
+    assertEquals(1, before.items().size());
+    assertEquals(0, before.count());
+    var editor = EditorState.editing("day.md", doc, TEMPLATE, before.items().get(0).original());
+    assertEquals("Заполни тестовое значение!", editor.fieldValue(0));
+    editor.editField(0, "ясно");
+    var after =
+        VaultRepository.plan(
+                editor,
+                doc,
+                doc,
+                TEMPLATE,
+                LocalDate.of(2026, 11, 18),
+                LocalDateTime.of(2026, 11, 18, 12, 0))
+            .get(0)
+            .after();
+    assertEquals(doc.text.replace("Погода:: Заполни тестовое значение!", "Погода:: ясно"), after);
+    assertEquals(1, section(new Markdown(after), "## Заметки").count());
+    assertTrue(doc.text.contains("Погода:: Заполни тестовое значение!"));
+  }
+
+  @Test
+  public void promptCountersAgreeForParentsSearchResultsAndCrossPeopleProjections() {
+    var doc =
+        new Markdown(
+            "## Заметки\n\n"
+                + "ShortDescr:: Заполни тестовое описание! #crossPeople/Tasks\n\n"
+                + "## Родитель\n"
+                + "### Дела\n"
+                + "Температура:: Заполни тестовое значение!\n");
+    var roots = DayOutline.sections(doc, TEMPLATE, RULES);
+    for (var root : roots) assertEquals(0, root.count());
+    var catalog = new Routing.Catalog(doc, TEMPLATE);
+    var found = DayOutline.search(roots, catalog, "Температура");
+    assertEquals(1, found.size());
+    assertEquals(0, found.get(0).count());
+    assertFalse(catalog.matchingFields("### Дела", "Температура").isEmpty());
+    assertEquals(0, section(doc, "### Дела").count());
+    assertTrue(
+        section(doc, "### Дела").items().stream().anyMatch(DayContentRules.Item::projection));
+  }
+
+  @Test
+  public void realValuesAndLiteralExamplesAreNotDiscardedBecauseTheyMentionThePrompt() {
+    for (String value :
+        List.of("ясно", "0", "Сначала Заполни тестовое значение!", "Значение уже задано"))
+      assertTrue(value, RULES.countable("Погода:: " + value));
+    assertTrue(RULES.countable("Заполни тестовое значение!"));
+    assertTrue(RULES.view("```text\nПогода:: Заполни тестовое значение!\n```").counted());
+    var doc =
+        new Markdown(
+            "## Погода\n"
+                + "Погода::   Заполни тестовое значение!\n"
+                + "Температура:: Заполни тестовое значение!\n");
+    var rows = DailyChecklist.rows(doc, new DailyChecklist.Context(0, null, false, null, null));
+    for (String label : List.of("Погода", "Температура"))
+      assertFalse(
+          rows.stream()
+              .filter(row -> row.label().equals(label))
+              .findFirst()
+              .orElseThrow()
+              .status()
+              .get(0)
+              .ok());
   }
 }

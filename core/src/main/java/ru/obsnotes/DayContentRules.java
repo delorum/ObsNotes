@@ -55,10 +55,17 @@ public final class DayContentRules {
         || normalized.startsWith("- [x] #task/dairy/diet не соблюдал диету");
   }
 
+  public static boolean emptyDataviewValue(String value) {
+    String text = value.strip();
+    return text.isEmpty() || text.startsWith("Заполни");
+  }
+
   public static boolean emptyDataviewKey(String line) {
     String clean = CrossReferences.clean(line).strip();
     var field = Markdown.FIELD.matcher(clean);
-    if (!field.matches() || !field.group(2).isBlank()) return false;
+    if (!field.matches() || !emptyDataviewValue(field.group(2))) return false;
+    // Template prompts are empty even for keys whose truly blank lines have JS exceptions.
+    if (!field.group(2).isBlank()) return true;
     String key = field.group(1);
     return !Set.of("ФотоПогоды", "ShortDescr", "ShortDescrWeek").contains(key);
   }

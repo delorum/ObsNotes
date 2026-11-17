@@ -87,7 +87,7 @@ public final class DailyChecklist {
 
   private static boolean filled(Map<String, List<String>> values, String key) {
     return values.getOrDefault(key, List.of()).stream()
-        .anyMatch(v -> !v.isBlank() && !v.startsWith("Заполни"));
+        .anyMatch(v -> !DayContentRules.emptyDataviewValue(v));
   }
 
   private static boolean tag(String line, String id) {
