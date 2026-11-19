@@ -4,9 +4,11 @@ Restores the app's original preferences byte-for-byte, including production reco
 """
 import argparse
 import datetime as dt
+import io
 import shlex
 import unittest
 import xml.etree.ElementTree as ET
+from PIL import Image
 import device_day_navigation as d
 import device_editor_parts as p
 import device_editor_exit as e
@@ -261,6 +263,69 @@ class ValuePartsTest(unittest.TestCase):
         self.save()
         self.assertEqual(original.replace('Metric:: old', 'Metric:: one; two'), self.note())
         print('Phone: multiple protected keys, no-op bytes/mtime and multiline value update passed', flush=True)
+
+    def test_7_empty_cards_remain_visible_and_outline_always_follows_cursor(self):
+        self.open_note()
+        stamp = d.adb('shell', 'stat', '-c', '%y', d.PHONE + '/' + self.relative)
+
+        def card(part, active, empty=False):
+            node = d.find(desc=f'Назначения части {part}', down=False)
+            self.assertEqual(str(active).lower(), node.get('selected'))
+            x1, y1, x2, y2 = d.bounds(node)
+            self.assertGreater(x2 - x1, 100)
+            self.assertGreaterEqual(y2 - y1, 48)
+            picture = Image.open(io.BytesIO(d.adb('exec-out', 'screencap', '-p'))).convert('RGB')
+            edge = picture.getpixel((x1 + 1, (y1 + y2) // 2))
+            if active:
+                self.assertEqual((230, 231, 236), edge, 'Active card has no white outline')
+            else:
+                self.assertNotEqual((230, 231, 236), edge, 'Inactive card retained the outline')
+            if empty:
+                self.assertFalse([n for n in node.iter('node') if n.get('text')])
+            return node
+
+        card(1, True)
+        d.tap(d.find(desc='Удалить раздел: Заметки', down=False))
+        card(1, True, True)
+        print('Phone: single populated/empty card keeps its white outline', flush=True)
+
+        d.tap(d.find(text='На строку'))
+        d.wait_for(d.keyboard_shown)
+        u.picker_query('HomeAlias')
+        d.tap(d.nodes(d.tree(), text=u.labels()[0])[0])
+        p.hide_ime()
+        card(1, True)
+        d.tap(d.find(desc='Удалить метку HomeAlias', down=False))
+        card(1, True, True)
+
+        enter('First\n\nSecond')
+        self.assertEqual(2, len(p.state()['items']))
+        card(1, False, True)
+        card(2, True, True)
+        choose_part(2, 'HomeAlias')
+        card(2, True)
+        d.tap(d.find(desc='Удалить раздел: Дом', down=False))
+        card(2, True, True)
+        card(1, False, True)
+        p.caret(1)
+        card(1, True, True)
+        card(2, False, True)
+        p.caret(2)
+        card(2, True, True)
+        choose_part(2, 'WorkAlias')
+        self.assertEqual([], p.state()['items'][0]['routes'])
+        self.assertEqual('## Работа', p.state()['items'][1]['heading'])
+        card(1, False, True)
+        card(2, True)
+        self.assertEqual(SOURCE, self.note(), 'Metadata actions wrote while editor was open')
+        d.tap(d.find(desc='Удалить раздел: Работа', down=False))
+        card(2, True, True)
+        enter('OpenMe')
+        card(1, True, True)
+        self.save()
+        self.assertEqual(SOURCE, self.note())
+        self.assertEqual(stamp, d.adb('shell', 'stat', '-c', '%y', d.PHONE + '/' + self.relative))
+        print('Phone: empty second card, last-tag deletion, cursor outlines, reassignment and no-op save passed', flush=True)
 
 
 if __name__ == '__main__':

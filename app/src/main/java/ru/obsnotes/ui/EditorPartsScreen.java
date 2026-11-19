@@ -59,7 +59,7 @@ final class EditorPartsScreen {
           updateLock.run();
           int at = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
           for (int i = 0; i < cards.size(); i++) {
-            boolean active = cards.size() > 1 && i == at;
+            boolean active = i == at;
             LinearLayout card = cards.get(i);
             card.setSelected(active);
             var background = ui.background(Ui.CARD, 14);
@@ -88,6 +88,7 @@ final class EditorPartsScreen {
                 };
             EditorScreen.Actions scoped = new PartActions(actions, select, () -> render[0].run());
             LinearLayout card = ui.card(panels);
+            card.setMinimumHeight(ui.dp(48));
             cards.add(card);
             card.setContentDescription("Назначения части " + (i + 1));
             ChipGroup chips = new ChipGroup(ui.activity);
@@ -141,12 +142,11 @@ final class EditorPartsScreen {
               root.setOnCloseIconClickListener(v -> scoped.deleteRoot());
               chips.addView(root);
             }
-            if (chips.getChildCount() > 0) chips.setVisibility(android.view.View.VISIBLE);
-            card.setVisibility(
-                chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
             if (form.kind == Markdown.Kind.TASK && !form.taskAppend) {
               chips.addView(TaskTextMode.button(ui, form, scoped::changed));
             }
+            chips.setVisibility(
+                chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
           }
           updateActive.run();
         };
