@@ -50,6 +50,7 @@ public final class DayScreen {
       Markdown document,
       Markdown template,
       DayContentRules rules,
+      HiddenSections visibility,
       boolean connected,
       boolean nextDayEnabled,
       Set<String> expanded,
@@ -97,7 +98,7 @@ public final class DayScreen {
       ui.error(DayNavigation.NOT_FOUND);
       return next;
     }
-    var outline = DayOutline.sections(document, template, rules);
+    var outline = visibility.outline(DayOutline.sections(document, template, rules));
     var catalog = new Routing.Catalog(document, template);
     EditText search = ui.searchField(ui.body, "Поиск разделов", query);
     search.setTag("section-search");

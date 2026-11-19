@@ -20,6 +20,7 @@ public final class MainActivity extends AppCompatActivity {
   private SharedPreferences prefs;
   private EditorRecovery recovery;
   private UsageHistory usage;
+  private SectionVisibilityPrefs sectionVisibility;
   private PasswordStore passwords;
   private final Runnable expirePassword =
       () -> {
@@ -88,6 +89,7 @@ public final class MainActivity extends AppCompatActivity {
     prefs = getSharedPreferences("obsnotes", MODE_PRIVATE);
     recovery = new EditorRecovery(prefs);
     usage = new UsageHistory(prefs);
+    sectionVisibility = new SectionVisibilityPrefs(prefs);
     passwords = new PasswordStore(prefs);
     vault = prefs.getString("vault", "");
     if (saved != null) {
@@ -100,7 +102,8 @@ public final class MainActivity extends AppCompatActivity {
             new OnBackPressedCallback(true) {
               public void handleOnBackPressed() {
                 if (busy) return;
-                if (!screen.equals("day")) home();
+                if (screen.equals("section-visibility")) showSettings();
+                else if (!screen.equals("day")) home();
                 else {
                   setEnabled(false);
                   getOnBackPressedDispatcher().onBackPressed();
@@ -389,6 +392,7 @@ public final class MainActivity extends AppCompatActivity {
             document,
             template,
             contentRules,
+            hiddenSections(document),
             connected,
             nextDayIsAvailable(),
             expanded,
@@ -703,10 +707,12 @@ public final class MainActivity extends AppCompatActivity {
 
   private List<Routing.Choice> routeChoices(Routing.Catalog catalog) {
     EditorState form = editor.activePart();
+    var visibility = hiddenFor(form);
     return usage
         .load(vault)
         .rankedRoutes(
             catalog.choices.stream()
+                .filter(c -> !visibility.hidden(c.target().heading()))
                 .filter(c -> !form.editFields || c.target().kind() == Markdown.Kind.SECTION)
                 .filter(
                     c ->
@@ -756,7 +762,11 @@ public final class MainActivity extends AppCompatActivity {
     SearchPicker.show(
         ui,
         "Заменить метку",
-        usage.load(vault).ranked(options.items(), CrossReferences.Destination::heading),
+        usage
+            .load(vault)
+            .ranked(
+                hiddenFor(form).offered(options.items(), CrossReferences.Destination::heading),
+                CrossReferences.Destination::heading),
         d -> d.id() + " · " + d.title(),
         !tag.person(),
         options.selected(),
@@ -838,7 +848,11 @@ public final class MainActivity extends AppCompatActivity {
         usage
             .load(vault)
             .ranked(
-                CrossReferences.selectable(template, person), CrossReferences.Destination::heading),
+                hiddenFor(form)
+                    .offered(
+                        CrossReferences.selectable(template, person),
+                        CrossReferences.Destination::heading),
+                CrossReferences.Destination::heading),
         d -> d.id() + " · " + d.title(),
         true,
         List.of(),
@@ -1314,6 +1328,32 @@ public final class MainActivity extends AppCompatActivity {
                 }));
   }
 
+  private HiddenSections hiddenSections(Markdown source) {
+    return new HiddenSections(
+        source == null ? new Markdown("") : source, template, sectionVisibility.load(vault));
+  }
+
+  private HiddenSections hiddenFor(EditorState form) {
+    Markdown source =
+        document != null && form.destinationSnapshot.equals(document.text)
+            ? document
+            : new Markdown(form.destinationSnapshot);
+    return hiddenSections(source);
+  }
+
+  private void showHiddenSections() {
+    if (busy) return;
+    screen = "section-visibility";
+    var source = document == null ? new Markdown("") : document;
+    String selectedVault = vault;
+    SectionVisibilityScreen.show(
+        ui,
+        hiddenSections(source),
+        new Routing.Catalog(source, template),
+        this::showSettings,
+        visibility -> sectionVisibility.save(selectedVault, visibility.explicit()));
+  }
+
   private void showSettings() {
     cancelNavigation();
     screen = "settings";
@@ -1326,6 +1366,10 @@ public final class MainActivity extends AppCompatActivity {
         folder,
         repository != null,
         passwords.exists(vault),
+        (int)
+            hiddenSections(document).entries().stream()
+                .filter(HiddenSections.Entry::hidden)
+                .count(),
         new SettingsScreen.Actions() {
           public void back() {
             home();
@@ -1346,6 +1390,10 @@ public final class MainActivity extends AppCompatActivity {
 
           public void password(int operation) {
             changePassword(operation);
+          }
+
+          public void sections() {
+            showHiddenSections();
           }
 
           public void keepFiles() {

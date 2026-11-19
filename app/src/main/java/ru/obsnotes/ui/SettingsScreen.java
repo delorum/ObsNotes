@@ -17,10 +17,17 @@ public final class SettingsScreen {
     void keepFiles();
 
     void password(int operation);
+
+    void sections();
   }
 
   public static void show(
-      Ui ui, String folder, boolean hasRepository, boolean hasPassword, Actions actions) {
+      Ui ui,
+      String folder,
+      boolean hasRepository,
+      boolean hasPassword,
+      int hiddenCount,
+      Actions actions) {
     ui.page("Настройки", actions::back);
     ui.body.addView(
         ui.button(
@@ -42,6 +49,7 @@ public final class SettingsScreen {
             14,
             Ui.MUTED));
     if (!folder.isEmpty()) {
+      ui.body.addView(ui.button("Скрытые разделы · " + hiddenCount, actions::sections));
       ui.body.addView(ui.bold("Шифрование", 16, Ui.INK));
       if (!hasPassword) ui.body.addView(ui.button("Создать пароль", () -> actions.password(0)));
       else {

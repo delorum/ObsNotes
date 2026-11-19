@@ -59,23 +59,7 @@ public final class DayOutline {
 
   public static List<Section> sections(
       Markdown document, Markdown template, DayContentRules rules) {
-    List<Markdown.Section> order = new ArrayList<>(template.sections);
-    Set<String> known = new HashSet<>();
-    for (var s : order) known.add(s.heading());
-    String previous = null;
-    for (var s : document.sections) {
-      if (known.add(s.heading())) {
-        int at = 0;
-        if (previous != null)
-          for (int i = 0; i < order.size(); i++)
-            if (order.get(i).heading().equals(previous)) {
-              at = i + 1;
-              break;
-            }
-        order.add(at, s);
-      }
-      previous = s.heading();
-    }
+    List<Markdown.Section> order = orderedSections(document, template);
     Deque<Builder> parents = new ArrayDeque<>();
     List<Builder> roots = new ArrayList<>();
     for (var s : order) {
@@ -95,6 +79,28 @@ public final class DayOutline {
         break;
       }
     return List.copyOf(result);
+  }
+
+  /** Shared source/template hierarchy order for display and visibility settings. */
+  public static List<Markdown.Section> orderedSections(Markdown document, Markdown template) {
+    List<Markdown.Section> order = new ArrayList<>(template.sections);
+    Set<String> known = new HashSet<>();
+    for (var s : order) known.add(s.heading());
+    String previous = null;
+    for (var s : document.sections) {
+      if (known.add(s.heading())) {
+        int at = 0;
+        if (previous != null)
+          for (int i = 0; i < order.size(); i++)
+            if (order.get(i).heading().equals(previous)) {
+              at = i + 1;
+              break;
+            }
+        order.add(at, s);
+      }
+      previous = s.heading();
+    }
+    return List.copyOf(order);
   }
 
   public static List<Section> search(Markdown document, Markdown template, String query) {
