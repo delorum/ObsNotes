@@ -85,6 +85,7 @@ public final class EditorRecovery {
     j.put("fresh", s.fresh);
     j.put("appendTaskText", s.appendTaskText);
     j.put("editFields", s.editFields);
+    j.put("fieldPrefix", s.fieldPrefix);
     j.put("weatherForm", s.weatherForm);
     j.put("taskAppend", s.taskAppend);
     j.put("routesInitialized", s.routesInitialized);
@@ -191,6 +192,7 @@ public final class EditorRecovery {
     s.fresh = j.getBoolean("fresh");
     s.appendTaskText = j.optBoolean("appendTaskText", true);
     s.editFields = j.optBoolean("editFields");
+    s.fieldPrefix = j.optString("fieldPrefix");
     s.weatherForm = j.optBoolean("weatherForm");
     s.taskAppend = j.optBoolean("taskAppend");
     s.routesInitialized = j.optBoolean("routesInitialized");

@@ -50,7 +50,7 @@ public final class EditorScreen {
   public static void show(
       Ui ui, EditorState state, Markdown template, String weatherCity, Actions actions) {
     if (state.parts != null) {
-      EditorPartsScreen.show(ui, state, template, actions);
+      EditorPartsScreen.show(ui, state, template, weatherCity, actions);
       return;
     }
     String title =
@@ -75,8 +75,7 @@ public final class EditorScreen {
     List<EditText> edits = new ArrayList<>();
     if (state.fieldCount() > 0)
       for (int i = 0; i < state.fieldCount(); i++) {
-        EditText field =
-            ui.field(ui.body, state.fieldName(i), state.fieldValue(i), state.weatherForm, null);
+        EditText field = ui.field(ui.body, state.fieldName(i), state.fieldValue(i), true, null);
         if (state.weatherForm) {
           field.setMinLines(1);
           field.setMaxLines(4);
@@ -91,26 +90,8 @@ public final class EditorScreen {
                   ? "Дополнение"
                   : state.kind == Markdown.Kind.FIELD ? "Значение" : "Текст",
               state.editableText(),
-              !state.taskAppend,
+              true,
               null));
-    if (state.taskAppend) {
-      EditText input = edits.get(0);
-      input.setFilters(
-          new android.text.InputFilter[] {
-            (source, start, end, dest, from, to) -> {
-              String value = source.subSequence(start, end).toString();
-              String single = DiaryTasks.addition(value);
-              return value.equals(single) ? null : single;
-            }
-          });
-      input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
-      input.setOnEditorActionListener(
-          (v, action, event) -> {
-            if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
-            actions.save();
-            return true;
-          });
-    }
     Runnable refresh =
         () -> {
           if (state.weatherForm) highlight(edits, state);
@@ -220,7 +201,7 @@ public final class EditorScreen {
         : "Изменения сохраняются при выходе. Метки и связи — под текстом.";
   }
 
-  private static void weatherRow(Ui ui, EditorState state, String city, Actions actions) {
+  static void weatherRow(Ui ui, EditorState state, String city, Actions actions) {
     LinearLayout row = ui.row();
     String name =
         WeatherSummary.LOCATIONS.stream()

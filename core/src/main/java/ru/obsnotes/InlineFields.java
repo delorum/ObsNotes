@@ -7,6 +7,11 @@ import java.util.regex.*;
 public final class InlineFields {
   private InlineFields() {}
 
+  /** A value occupies one physical Markdown line; paragraph splitting happens before this. */
+  public static String singleLine(String text) {
+    return text.replace("\r\n", "\n").replace('\r', '\n').replace("\n", "; ");
+  }
+
   private static final Pattern FIELD = Pattern.compile("^([\\p{L}\\d_-]+)::([ \\t]*)(.*)$");
   private static final Pattern ANCHOR = Pattern.compile("[ \\t]+\\^[A-Za-z0-9_-]+[ \\t]*$");
 

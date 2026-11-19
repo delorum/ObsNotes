@@ -18,6 +18,7 @@ public final class EditorState {
   public boolean fresh = true;
   public boolean appendTaskText = true;
   public boolean editFields = false, routesInitialized = false, routeChosen = false;
+  public String fieldPrefix = "";
   public boolean weatherForm = false;
   public boolean taskAppend = false;
   public String fallbackHeading = "";
@@ -34,13 +35,46 @@ public final class EditorState {
   public boolean deferRootCleanup;
 
   public void enableParts(Markdown template) {
-    if (parts == null && !weatherForm && !taskAppend && !editFields) parts = new EditorParts(this);
-    if (parts != null) {
-      parts.template = template;
-      parts.sync();
-      parts.migrateLegacyLinks();
-      parts.importLinks();
+    if (weatherForm) return;
+    boolean creating = parts == null;
+    boolean unchanged = creating && EditorRevision.unchanged(this, template);
+    InputCaret caret = creating && editFields ? inputCaret() : null;
+    if (creating) parts = new EditorParts(this);
+    if (caret != null && caret.field() < parts.parts.size())
+      cursor = parts.parts.get(caret.field()).start() + caret.offset();
+    parts.template = template;
+    parts.sync();
+    parts.migrateLegacyLinks();
+    parts.importLinks();
+    if (unchanged) EditorRevision.remember(this, template);
+  }
+
+  /** Protected field names are metadata; each original value starts as its own paragraph. */
+  List<EditorState> fieldForms() {
+    Parts metadata = parts();
+    var fields = FieldBlock.parse(metadata.body).fields();
+    if (!editFields || fields.isEmpty()) return List.of();
+    List<EditorState> forms = new ArrayList<>();
+    for (int i = 0; i < fields.size(); i++) {
+      var field = fields.get(i);
+      EditorState form = copy();
+      form.editFields = false;
+      form.fieldPrefix = field.prefix();
+      form.text =
+          (i == 0 ? metadata.link : "")
+              + field.value()
+              + (i == fields.size() - 1
+                  ? (metadata.anchor.isEmpty() ? "" : " ^" + metadata.anchor) + metadata.callout
+                  : "");
+      if (i > 0) form.partId = UUID.randomUUID().toString();
+      form.routesInitialized = false;
+      forms.add(form);
     }
+    return forms;
+  }
+
+  public String protectedFieldName() {
+    return fieldPrefix.replaceFirst("::[ \t]*$", "").strip();
   }
 
   public EditorState activePart() {
@@ -79,6 +113,7 @@ public final class EditorState {
     s.fresh = fresh;
     s.appendTaskText = appendTaskText;
     s.editFields = editFields;
+    s.fieldPrefix = fieldPrefix;
     s.routesInitialized = routesInitialized;
     s.routeChosen = routeChosen;
     s.weatherForm = weatherForm;
@@ -181,8 +216,10 @@ public final class EditorState {
   }
 
   public boolean emptyNote() {
+    if (!fieldPrefix.isEmpty()) return false;
     if (parts != null)
-      return parts.value.isBlank()
+      return parts.parts.stream().noneMatch(p -> !p.form().fieldPrefix.isEmpty())
+          && parts.value.isBlank()
           && !(!fresh
               && Events.prefix(sourcePath, original).body().isBlank()
               && parts.parts.stream()
@@ -310,7 +347,11 @@ public final class EditorState {
   }
 
   public void toggleSecret(char[] password, Markdown template) {
-    if (kind != Markdown.Kind.SECTION || editFields || taskAppend || weatherForm)
+    if (kind != Markdown.Kind.SECTION
+        || editFields
+        || !fieldPrefix.isEmpty()
+        || taskAppend
+        || weatherForm)
       throw new IllegalArgumentException("Шифрование доступно для текстовых блоков в разделах");
     Parts p = parts();
     String body = editableBody(p);
@@ -357,15 +398,34 @@ public final class EditorState {
   }
 
   public String fieldValue(int index) {
+    if (parts != null)
+      return parts.parts.stream()
+          .map(EditorParts.Part::form)
+          .filter(form -> !form.fieldPrefix.isEmpty())
+          .skip(index)
+          .findFirst()
+          .orElseThrow()
+          .editableText();
     return TaggedText.parse(FieldBlock.parse(parts().body).fields().get(index).value()).clean;
   }
 
   public void editField(int index, String value) {
+    if (parts != null) {
+      var part =
+          parts.parts.stream()
+              .filter(p -> !p.form().fieldPrefix.isEmpty())
+              .skip(index)
+              .findFirst()
+              .orElseThrow();
+      parts.edit(
+          parts.value.substring(0, part.start()) + value + parts.value.substring(part.end()));
+      return;
+    }
     Parts p = parts();
     var fields = FieldBlock.parse(p.body);
     String raw =
         TaggedText.parse(fields.fields().get(index).value())
-            .edit(value.replace("\r\n", "\n").replace("\n", "; "))
+            .edit(InlineFields.singleLine(value))
             .render();
     text = p.join(fields.edit(index, raw));
   }
@@ -385,7 +445,7 @@ public final class EditorState {
       parts.edit(value);
       return;
     }
-    if (taskAppend) value = DiaryTasks.addition(value);
+    value = value.replace("\r\n", "\n").replace('\r', '\n');
     Parts parts = parts();
     text =
         joinVisible(
@@ -508,11 +568,14 @@ public final class EditorState {
   public String savedText() {
     Parts parts = parts();
     TaggedText tags = TaggedText.parse(secretOpen ? SecretText.openBody(parts.body) : parts.body);
-    if (tags.clean.isBlank()) {
+    if (tags.clean.isBlank() && fieldPrefix.isEmpty()) {
       if (parentOnly()) return parts.link.stripTrailing();
       throw new IllegalArgumentException("Введите текст");
     }
-    return parts.join(tags.render().stripTrailing());
+    String body = tags.render().stripTrailing();
+    if (kind != Markdown.Kind.SECTION || !fieldPrefix.isEmpty())
+      body = InlineFields.singleLine(body);
+    return parts.join(fieldPrefix + body);
   }
 
   public Routing.Catalog routingCatalog(Markdown template) {
@@ -522,7 +585,8 @@ public final class EditorState {
   public void initializeRoutes(Markdown template) {
     if (routesInitialized) return;
     if (fallbackHeading.isEmpty()) fallbackHeading = heading;
-    if (!fresh && FieldBlock.parse(parts().body).present()) editFields = true;
+    if (!fresh && fieldPrefix.isEmpty() && FieldBlock.parse(parts().body).present())
+      editFields = true;
     var catalog = routingCatalog(template);
     List<Routing.Choice> choices = new ArrayList<>();
     choices.add(catalog.resolve(target()));
@@ -557,7 +621,9 @@ public final class EditorState {
   public void applyRoutes(List<Routing.Choice> choices, Routing.Catalog catalog) {
     String error = validateRoutes(choices);
     if (error != null) throw new IllegalArgumentException(error);
-    if (editFields && !choices.isEmpty() && choices.get(0).target().kind() != Markdown.Kind.SECTION)
+    if ((editFields || !fieldPrefix.isEmpty())
+        && !choices.isEmpty()
+        && choices.get(0).target().kind() != Markdown.Kind.SECTION)
       throw new IllegalArgumentException("Для поля изменяйте значение или раздел");
     Markdown.Target selected =
         choices.isEmpty()
@@ -592,9 +658,10 @@ public final class EditorState {
   public String validateRoutes(List<Routing.Choice> choices) {
     String error = Routing.validate(choices);
     if (error != null) return error;
-    if (!choices.isEmpty()
-        && choices.get(0).target().kind() == Markdown.Kind.FIELD
-        && editableText().contains("\n")) return "Для Dataview-ключа нужен однострочный текст";
+    if (!fieldPrefix.isEmpty()
+        && !choices.isEmpty()
+        && choices.get(0).target().kind() != Markdown.Kind.SECTION)
+      return "Для поля изменяйте значение или раздел";
     return null;
   }
 
@@ -650,12 +717,15 @@ public final class EditorState {
         end = part.end();
       }
       raw.append(parts.baseline.substring(end));
-      return SecretText.edit(raw.toString(), FieldBlock.labels(parts.value));
+      return parts.error.isEmpty() && parts.baseline.equals(parts.value)
+          ? raw.toString()
+          : SecretText.edit(raw.toString(), FieldBlock.labels(parts.value));
     }
     Parts p = parts();
     String value =
         FieldBlock.labels(
             TaggedText.parse(secretOpen ? SecretText.openBody(p.body) : p.body).clean);
+    if (!fieldPrefix.isEmpty()) return protectedFieldName() + ": " + value;
     if (kind == Markdown.Kind.FIELD && !editFields) {
       var field = Markdown.FIELD.matcher(targetSource);
       if (field.matches()) return field.group(1) + ": " + value;

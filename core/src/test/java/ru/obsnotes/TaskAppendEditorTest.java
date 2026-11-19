@@ -105,7 +105,7 @@ public class TaskAppendEditorTest {
   public void pastedLineBreaksBecomeSemicolonSeparatedDetailsOnTheSameTaskLine() {
     var state = open(SOURCE, 0);
     state.edit("one\r\ntwo\rthree\nfour");
-    assertEquals("one; two; three; four", state.editableText());
+    assertEquals("one\ntwo\nthree\nfour", state.editableText());
     assertTrue(
         plan(state, SOURCE)
             .get(0)

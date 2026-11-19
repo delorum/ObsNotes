@@ -200,7 +200,7 @@ public class EditorRevisionTest {
     assertFalse(unchanged(s));
     s.edit("Alpha");
     assertTrue(unchanged(s));
-    assertTrue(s.initialRevision.startsWith("v3:"));
+    assertTrue(s.initialRevision.startsWith("v4:"));
     assertFalse(s.initialRevision.contains("Alpha"));
   }
 

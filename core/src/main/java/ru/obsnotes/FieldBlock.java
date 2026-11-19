@@ -74,7 +74,7 @@ public final class FieldBlock {
   public String edit(int index, String rawValue) {
     List<String> values = new ArrayList<>();
     for (var f : fields) values.add(f.value());
-    values.set(index, rawValue.replace("\r\n", "\n").replace('\r', '\n').replace("\n", "; "));
+    values.set(index, InlineFields.singleLine(rawValue));
     return withValues(String.join("\n", values));
   }
 }

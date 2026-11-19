@@ -24,9 +24,21 @@ public final class EditorParts {
 
   public EditorParts(EditorState owner) {
     this.owner = owner;
-    value = baseline = owner.editableText();
-    parts.add(new Part(0, value.length(), owner.copy()));
-    edit(value);
+    var fields = owner.fieldForms();
+    if (fields.isEmpty()) {
+      value = baseline = owner.editableText();
+      parts.add(new Part(0, value.length(), owner.copy()));
+      edit(value);
+    } else {
+      StringBuilder input = new StringBuilder();
+      for (var field : fields) {
+        if (!parts.isEmpty()) input.append("\n\n");
+        int start = input.length();
+        input.append(field.editableText());
+        parts.add(new Part(start, input.length(), field));
+      }
+      value = baseline = input.toString();
+    }
     importLinks();
   }
 
@@ -53,7 +65,7 @@ public final class EditorParts {
 
   /** Stable character overlap retains assignments when paragraphs are inserted or removed. */
   public void edit(String next) {
-    next = next.replace("\r\n", "\n");
+    next = next.replace("\r\n", "\n").replace('\r', '\n');
     value = next;
     int prefix = 0;
     while (prefix < baseline.length()
@@ -68,25 +80,53 @@ public final class EditorParts {
     final int p = prefix, o = oldEnd, n = newEnd;
     java.util.function.IntUnaryOperator map = at -> at <= p ? at : at >= o ? at + n - o : p;
     java.util.function.IntUnaryOperator mapStart = at -> at < p ? at : at >= o ? at + n - o : p;
+    java.util.function.ToIntFunction<Part> mappedStart =
+        part ->
+            part.start() == part.end() && pinned(part.form())
+                ? map.applyAsInt(part.start())
+                : mapStart.applyAsInt(part.start());
+    Map<String, Integer> originalOrder = new HashMap<>();
+    for (int i = 0; i < parts.size(); i++) originalOrder.put(parts.get(i).form().partId, i);
+    var fieldSlots = parts.stream().filter(part -> !part.form().fieldPrefix.isEmpty()).toList();
+    boolean replaceValues =
+        fieldSlots.size() > 1
+            && (prefix == 0 && suffix == 0
+                || prefix < fieldSlots.get(0).end()
+                    && oldEnd > fieldSlots.get(fieldSlots.size() - 1).start());
     List<Part> result = new ArrayList<>();
     Set<EditorState> used = Collections.newSetFromMap(new IdentityHashMap<>());
     try {
-      for (int[] range : ranges(next)) {
+      var spans = ranges(next);
+      if (next.isBlank() && parts.stream().anyMatch(part -> pinned(part.form())))
+        spans = List.of(new int[] {0, 0});
+      int slot = 0;
+      for (int[] range : spans) {
         List<Part> contributors = new ArrayList<>();
         for (Part old : parts) {
-          int a = mapStart.applyAsInt(old.start()), b = map.applyAsInt(old.end());
+          int a = mappedStart.applyAsInt(old), b = map.applyAsInt(old.end());
           if (Math.max(a, range[0]) < Math.min(b, range[1])) contributors.add(old);
         }
+        if (replaceValues && slot < fieldSlots.size()) {
+          contributors.clear();
+          contributors.add(fieldSlots.get(slot));
+        }
+        slot++;
         boolean inferred = contributors.isEmpty();
         if (contributors.isEmpty()) {
           Part closest = parts.get(0);
-          for (Part old : parts) if (mapStart.applyAsInt(old.start()) <= range[0]) closest = old;
+          for (Part old : parts) if (mappedStart.applyAsInt(old) <= range[0]) closest = old;
           contributors.add(closest);
         }
         Part origin = contributors.get(0);
         EditorState form = origin.form().copy();
         boolean mappedContent = map.applyAsInt(origin.end()) > mapStart.applyAsInt(origin.start());
-        boolean first = (!inferred || !mappedContent) && used.add(origin.form());
+        int originStart = Math.max(0, Math.min(next.length(), mappedStart.applyAsInt(origin)));
+        boolean separatedEmpty =
+            inferred
+                && pinned(origin.form())
+                && range[0] > originStart
+                && next.substring(originStart, range[0]).contains("\n\n");
+        boolean first = !separatedEmpty && (!inferred || !mappedContent) && used.add(origin.form());
         if (!first) {
           boolean opened = form.secretOpen;
           form.clearEventMetadata();
@@ -95,6 +135,21 @@ public final class EditorParts {
             form.secretOpen = true;
           }
           form.partId = UUID.randomUUID().toString();
+          if (!form.fieldPrefix.isEmpty() || form.kind != Markdown.Kind.SECTION) {
+            form.fieldPrefix = "";
+            form.editFields = false;
+            form.taskAppend = false;
+            form.fresh = true;
+            form.appendTaskText = true;
+            form.kind = Markdown.Kind.SECTION;
+            form.heading = form.fallbackHeading = "## Заметки";
+            form.targetSource = "";
+            form.targetLine = -1;
+            form.routes = List.of();
+            form.routesInitialized = false;
+            form.routeChosen = false;
+            form.initializeRoutes(template);
+          }
         }
         // Block-level destinations follow a split. Per-line/person tags follow their characters.
         List<TaggedText.Tag> tags = new ArrayList<>();
@@ -102,10 +157,13 @@ public final class EditorParts {
         for (Part old : contributors) {
           EditorState source = old.form();
           if (old != origin) {
+            if (!source.fieldPrefix.isEmpty())
+              throw new IllegalArgumentException("Поля имеют разные ключи. Верните пустую строку.");
             if (!Events.id(source.text).isEmpty() || !source.rootLinkLabel().isEmpty())
               throw new IllegalArgumentException(
                   "Для объединения частей сначала уберите их связи или верните пустую строку.");
-            for (Routing.Choice route : source.routes) {
+            for (Routing.Choice route :
+                source.routeChosen ? source.routes : List.<Routing.Choice>of()) {
               if (routes.stream().anyMatch(c -> c.target().equals(route.target()))) continue;
               if (route.target().kind() != Markdown.Kind.SECTION || route.crossId().isEmpty())
                 throw new IllegalArgumentException(
@@ -134,6 +192,26 @@ public final class EditorParts {
         result.add(new Part(range[0], range[1], form));
       }
       for (Part old : parts) {
+        if (pinned(old.form())
+            && result.stream().noneMatch(part -> part.form().partId.equals(old.form().partId))) {
+          EditorState empty = old.form().copy();
+          empty.replaceBody("");
+          int at = Math.max(0, Math.min(next.length(), mappedStart.applyAsInt(old)));
+          for (var existing : result)
+            if (at >= existing.start() && at < existing.end()) {
+              boolean follows =
+                  originalOrder.get(old.form().partId)
+                      > originalOrder.getOrDefault(existing.form().partId, Integer.MAX_VALUE);
+              at = follows ? existing.end() : existing.start();
+            }
+          result.add(new Part(at, at, empty));
+        }
+      }
+      result.sort(
+          Comparator.comparingInt(Part::start)
+              .thenComparingInt(
+                  part -> originalOrder.getOrDefault(part.form().partId, Integer.MAX_VALUE)));
+      for (Part old : parts) {
         String id = Events.id(old.form().text);
         if (!id.isEmpty()
             && result.stream().noneMatch(part -> Events.id(part.form().text).equals(id)))
@@ -154,6 +232,10 @@ public final class EditorParts {
     }
   }
 
+  private static boolean pinned(EditorState form) {
+    return !form.fieldPrefix.isEmpty() || form.taskAppend;
+  }
+
   /** Metadata actions may insert a person's visible name; keep the shared field in sync. */
   public void sync() {
     String pending = value;
@@ -161,12 +243,18 @@ public final class EditorParts {
     StringBuilder joined = new StringBuilder();
     List<Part> adjusted = new ArrayList<>();
     int end = 0;
+    EditorState previous = null;
     for (Part part : parts) {
+      if (previous != null
+          && part.start() == end
+          && !previous.fieldPrefix.isEmpty()
+          && !part.form().fieldPrefix.isEmpty()) joined.append("\n\n");
       joined.append(baseline, end, part.start());
       int start = joined.length();
       joined.append(part.form().editableText());
       adjusted.add(new Part(start, joined.length(), part.form()));
       end = part.end();
+      previous = part.form();
     }
     joined.append(baseline.substring(end));
     parts.clear();
@@ -535,7 +623,20 @@ public final class EditorParts {
                 f ->
                     f.kind == Markdown.Kind.SECTION
                         && f.heading.equals(owner.originalBlock(source).section().heading()))) {
-      String joined = String.join("\n\n", forms.stream().map(EditorState::savedText).toList());
+      StringBuilder output = new StringBuilder();
+      for (int i = 0; i < forms.size(); i++) {
+        if (i > 0) {
+          var previous = forms.get(i - 1);
+          boolean adjacentFields =
+              !previous.fieldPrefix.isEmpty()
+                  && !forms.get(i).fieldPrefix.isEmpty()
+                  && !Events.hasRelations(previous.sourcePath, previous.text)
+                  && !Events.hasRelations(forms.get(i).sourcePath, forms.get(i).text);
+          output.append(adjacentFields ? "\n" : "\n\n");
+        }
+        output.append(forms.get(i).savedText());
+      }
+      String joined = output.toString();
       List<VaultRepository.Change> changes =
           List.of(
               new VaultRepository.Change(

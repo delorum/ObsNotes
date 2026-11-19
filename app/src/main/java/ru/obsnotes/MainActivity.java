@@ -713,7 +713,10 @@ public final class MainActivity extends AppCompatActivity {
         .rankedRoutes(
             catalog.choices.stream()
                 .filter(c -> !visibility.hidden(c.target().heading()))
-                .filter(c -> !form.editFields || c.target().kind() == Markdown.Kind.SECTION)
+                .filter(
+                    c ->
+                        !form.editFields && form.fieldPrefix.isEmpty()
+                            || c.target().kind() == Markdown.Kind.SECTION)
                 .filter(
                     c ->
                         form.fresh
@@ -1243,9 +1246,9 @@ public final class MainActivity extends AppCompatActivity {
     weatherLoading = false;
     ui.loading(false);
     if (summary != null) {
-      String before = editor.text;
+      String before = editor.editableText();
       editor.addWeather(summary);
-      if (!editor.text.equals(before)) {
+      if (!editor.editableText().equals(before)) {
         recovery.save(editor, vault);
         showEditor();
       }

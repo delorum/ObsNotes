@@ -8,7 +8,7 @@ import org.junit.Test;
 
 public class RoutingTest {
   @Test
-  public void singleLineAppendsToDataviewValueAndMultilineCannotSelectIt() {
+  public void singleAndMultilinePartsAppendSemicolonSeparatedDataviewValues() {
     var s = state("добавление");
     var c = s.routingCatalog(TEMPLATE);
     var field =
@@ -23,17 +23,13 @@ public class RoutingTest {
             .after()
             .contains("Поле:: значение; добавление"));
     var multi = state("строка\nдругая");
-    String before = multi.text;
-    assertNotNull(multi.validateRoutes(List.of(field)));
-    assertThrows(IllegalArgumentException.class, () -> multi.applyRoutes(List.of(field), c));
-    assertEquals(before, multi.text);
-    assertEquals("## Заметки", multi.heading);
-    multi.chooseTarget(field.target());
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            VaultRepository.plan(
-                multi, SOURCE, SOURCE, TEMPLATE, LocalDate.now(), LocalDateTime.now()));
+    assertNull(multi.validateRoutes(List.of(field)));
+    multi.applyRoutes(List.of(field), c);
+    assertTrue(
+        VaultRepository.plan(multi, SOURCE, SOURCE, TEMPLATE, LocalDate.now(), LocalDateTime.now())
+            .get(0)
+            .after()
+            .contains("Поле:: значение; строка; другая"));
   }
 
   private static final Markdown TEMPLATE =

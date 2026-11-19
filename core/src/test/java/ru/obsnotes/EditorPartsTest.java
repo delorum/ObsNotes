@@ -257,7 +257,7 @@ public class EditorPartsTest {
   }
 
   @Test
-  public void fieldDestinationRejectsMultilineAndGroupLinksToTasksAreRejected() {
+  public void fieldDestinationCollapsesMultilineAndGroupLinksToTasksAreRejected() {
     var s = editor();
     s.edit("Alpha\n\nBeta");
     var f = s.parts.parts.get(1).form();
@@ -274,7 +274,8 @@ public class EditorPartsTest {
     s.parts.linked = false;
     assertTrue(saved(s).contains("ShortDescr:: old; Beta"));
     f.edit("Beta\nline");
-    assertNotNull(f.validateRoutes(List.of(target)));
+    assertNull(f.validateRoutes(List.of(target)));
+    assertTrue(f.savedText().contains("Beta; line"));
   }
 
   @Test

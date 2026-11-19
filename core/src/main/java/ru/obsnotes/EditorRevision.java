@@ -31,6 +31,7 @@ public final class EditorRevision {
     for (EditorState form : forms) {
       add(key, form.destinationPath);
       add(key, form.kind);
+      add(key, form.fieldPrefix);
       add(key, form.heading);
       if (form.kind != Markdown.Kind.SECTION) {
         add(key, form.targetLine);
@@ -94,7 +95,7 @@ public final class EditorRevision {
     add(key, removed.size());
     for (String root : removed) add(key, root);
     try {
-      return "v3:"
+      return "v4:"
           + Base64.getEncoder()
               .encodeToString(
                   MessageDigest.getInstance("SHA-256")
@@ -110,7 +111,7 @@ public final class EditorRevision {
 
   /** Migrate old recovery records from their original source, never from the current edits. */
   public static void recoverBaseline(EditorState state, Markdown template) {
-    if (state.initialRevision.startsWith("v3:")) return;
+    if (state.initialRevision.startsWith("v4:")) return;
     try {
       Markdown source = new Markdown(state.sourceSnapshot);
       EditorState initial;
@@ -119,7 +120,9 @@ public final class EditorRevision {
         initial =
             EditorState.editing(state.sourcePath, source, template, state.originalBlock(source));
       else return;
-      state.initialRevision = contents(initial, template);
+      if (initial.weatherForm) remember(initial, template);
+      else initial.enableParts(template);
+      state.initialRevision = initial.initialRevision;
     } catch (IllegalArgumentException invalidOriginal) {
       // Existing conflict handling retains edits when an old snapshot cannot be reconstructed.
     }

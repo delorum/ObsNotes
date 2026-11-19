@@ -11,10 +11,25 @@ final class EditorPartsScreen {
   private EditorPartsScreen() {}
 
   /** One text field, with every paragraph's routing controls visible at the same time. */
-  static void show(Ui ui, EditorState owner, Markdown template, EditorScreen.Actions actions) {
-    ui.page(owner.fresh ? "Новая заметка" : "Текстовый блок", actions::back);
+  static void show(
+      Ui ui,
+      EditorState owner,
+      Markdown template,
+      String weatherCity,
+      EditorScreen.Actions actions) {
+    ui.page(
+        owner.taskAppend
+            ? "Дополнение к задаче"
+            : owner.fieldCount() == 1
+                ? owner.fieldName(0)
+                : owner.fieldCount() > 1
+                    ? "Поля"
+                    : owner.fresh ? "Новая заметка" : "Текстовый блок",
+        actions::back);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
-    EditText input = ui.field(ui.body, "Текст", owner.editableText(), true, null);
+    EditText input =
+        ui.field(
+            ui.body, owner.taskAppend ? "Дополнение" : "Текст", owner.editableText(), true, null);
     SecretInput.protect(input);
     var lock =
         ui.icon(
@@ -80,6 +95,13 @@ final class EditorPartsScreen {
             chips.setChipSpacingVertical(0);
             card.addView(chips);
             EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of(), colorOffset, false);
+            if (!form.fieldPrefix.isEmpty()) {
+              Chip key = EditorScreen.chip(ui, form.protectedFieldName(), Ui.INK);
+              key.setCloseIconVisible(false);
+              key.setContentDescription("Dataview-ключ " + form.protectedFieldName());
+              key.setClickable(false);
+              chips.addView(key, 0);
+            }
             colorOffset += LineMarks.of(form.editableText(), form.tags()).size();
             var refs = owner.parts.references(index);
             for (int n = 0; n < refs.size(); n++) {
@@ -122,7 +144,7 @@ final class EditorPartsScreen {
             if (chips.getChildCount() > 0) chips.setVisibility(android.view.View.VISIBLE);
             card.setVisibility(
                 chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
-            if (form.kind == Markdown.Kind.TASK) {
+            if (form.kind == Markdown.Kind.TASK && !form.taskAppend) {
               chips.addView(TaskTextMode.button(ui, form, scoped::changed));
             }
           }
@@ -135,6 +157,12 @@ final class EditorPartsScreen {
           owner.edit(value);
           owner.cursor = Math.max(0, input.getSelectionStart());
           actions.changed();
+          String normalized = owner.editableText();
+          if (owner.parts.error.isEmpty() && !value.equals(normalized)) {
+            int caret = Math.min(owner.cursor, normalized.length());
+            input.setText(normalized);
+            input.setSelection(caret);
+          }
           refresh.run();
         });
     ui.watchSelection(
@@ -219,6 +247,11 @@ final class EditorPartsScreen {
           actions.related();
         });
     ui.body.addView(relations);
+    for (int i = 0; i < owner.fieldCount(); i++)
+      if (owner.fieldName(i).equals("Погода") || owner.fieldName(i).equals("Температура")) {
+        EditorScreen.weatherRow(ui, owner, weatherCity, actions);
+        break;
+      }
     ui.body.addView(
         ui.text(
             "Изменения сохраняются при выходе. Метки относятся к указанной части.", 12, Ui.MUTED));

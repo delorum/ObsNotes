@@ -47,7 +47,7 @@ public final class DiaryTasks {
   }
 
   public static String addition(String text) {
-    return text.replace("\r\n", "\n").replace('\r', '\n').replace("\n", "; ");
+    return InlineFields.singleLine(text);
   }
 
   public static String appendBeforeAnchor(String line, String addition) {

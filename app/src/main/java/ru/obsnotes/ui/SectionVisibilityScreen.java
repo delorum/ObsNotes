@@ -46,6 +46,9 @@ public final class SectionVisibilityScreen {
             label.setGravity(Gravity.CENTER_VERTICAL);
             ui.weighted(row, label);
             var toggle = new MaterialSwitch(ui.activity);
+            toggle.setShowText(false);
+            toggle.setTextOn("");
+            toggle.setTextOff("");
             toggle.setChecked(!entry.hidden());
             toggle.setContentDescription("Показывать раздел " + entry.title());
             row.addView(toggle, new LinearLayout.LayoutParams(ui.dp(64), ui.dp(48)));
