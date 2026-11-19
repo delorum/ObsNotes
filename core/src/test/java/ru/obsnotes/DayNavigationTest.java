@@ -49,6 +49,20 @@ public class DayNavigationTest {
   }
 
   @Test
+  public void storageFallbackDistinguishesEmptyExistingFilesMissingFilesAndPermissionErrors()
+      throws Exception {
+    var storage = new Storage();
+    storage.text = "";
+    String next = DiaryLayout.path(DATE.plusDays(1));
+    assertTrue(storage.exists(next));
+    storage.error = new IOException("provider", new FileNotFoundException("missing"));
+    assertFalse(storage.exists(next));
+    storage.error = new IOException("Нет доступа");
+    assertSame(storage.error, assertThrows(IOException.class, () -> storage.exists(next)));
+    assertEquals(Collections.nCopies(3, next), storage.reads);
+  }
+
+  @Test
   public void wrappedMissingIsShortButOtherFailuresArePreserved() throws Exception {
     var s = new Storage();
     s.error = new IOException("provider", new FileNotFoundException("missing"));

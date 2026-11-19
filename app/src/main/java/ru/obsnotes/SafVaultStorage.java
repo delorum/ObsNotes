@@ -80,6 +80,24 @@ public final class SafVaultStorage implements VaultStorage {
     return current;
   }
 
+  @Override
+  public boolean exists(String path) throws IOException {
+    try (Cursor cursor =
+        context
+            .getContentResolver()
+            .query(
+                resolve(path),
+                new String[] {DocumentsContract.Document.COLUMN_DOCUMENT_ID},
+                null,
+                null,
+                null)) {
+      if (cursor == null) throw new IOException("Проверка файла недоступна");
+      return cursor.moveToFirst();
+    } catch (FileNotFoundException missing) {
+      return false;
+    }
+  }
+
   public String read(String path) throws IOException {
     try (InputStream in = context.getContentResolver().openInputStream(resolve(path));
         ByteArrayOutputStream out = new ByteArrayOutputStream()) {

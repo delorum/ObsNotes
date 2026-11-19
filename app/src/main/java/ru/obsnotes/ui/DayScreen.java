@@ -1,7 +1,9 @@
 package ru.obsnotes.ui;
 
+import android.content.res.ColorStateList;
 import android.view.View;
 import android.widget.*;
+import com.google.android.material.button.MaterialButton;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -42,13 +44,14 @@ public final class DayScreen {
     void checklist(Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed);
   }
 
-  public static void show(
+  public static MaterialButton show(
       Ui ui,
       LocalDate date,
       Markdown document,
       Markdown template,
       DayContentRules rules,
       boolean connected,
+      boolean nextDayEnabled,
       Set<String> expanded,
       String query,
       Actions actions) {
@@ -63,7 +66,7 @@ public final class DayScreen {
     if (!connected) {
       ui.body.addView(ui.text("Выберите папку хранилища в настройках", 16, Ui.MUTED));
       ui.body.addView(ui.button("Выбрать хранилище", actions::pickVault));
-      return;
+      return null;
     }
     LinearLayout dates = ui.row();
     ui.action(dates, ru.obsnotes.R.drawable.ic_left, "Предыдущий день", () -> actions.navigate(-1));
@@ -83,13 +86,16 @@ public final class DayScreen {
         });
     day.setContentDescription("Выбрать дату. Удерживайте, чтобы открыть сегодня");
     ui.weighted(dates, day);
-    ui.action(dates, ru.obsnotes.R.drawable.ic_right, "Следующий день", () -> actions.navigate(1));
+    MaterialButton next =
+        ui.icon(ru.obsnotes.R.drawable.ic_right, "Следующий день", () -> actions.navigate(1));
+    setNextEnabled(next, nextDayEnabled);
+    dates.addView(next, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
     LinearLayout.LayoutParams dateLayout = new LinearLayout.LayoutParams(-1, -2);
     dateLayout.bottomMargin = ui.dp(8);
     ui.body.addView(dates, dateLayout);
     if (document == null) {
       ui.error(DayNavigation.NOT_FOUND);
-      return;
+      return next;
     }
     var outline = DayOutline.sections(document, template, rules);
     var catalog = new Routing.Catalog(document, template);
@@ -154,6 +160,12 @@ public final class DayScreen {
       search.requestFocus();
       search.setSelection(search.length());
     } else ui.body.requestFocus();
+    return next;
+  }
+
+  public static void setNextEnabled(MaterialButton button, boolean enabled) {
+    button.setEnabled(enabled);
+    button.setIconTint(ColorStateList.valueOf(enabled ? Ui.INK : Ui.MUTED));
   }
 
   private static void section(

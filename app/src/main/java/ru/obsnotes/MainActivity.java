@@ -31,6 +31,10 @@ public final class MainActivity extends AppCompatActivity {
   private final ExecutorService io = Executors.newSingleThreadExecutor();
   private final ExecutorService navigationIo = Executors.newSingleThreadExecutor();
   private Future<?> navigationJob;
+  private final ExecutorService availabilityIo = Executors.newSingleThreadExecutor();
+  private Future<?> availabilityJob;
+  private com.google.android.material.button.MaterialButton nextDayButton;
+  private final NextDayAvailability nextDays = new NextDayAvailability();
   private long navigationVersion;
   private boolean navigationPending = false, polling = false;
   private final ExecutorService relationIo = Executors.newSingleThreadExecutor();
@@ -67,7 +71,10 @@ public final class MainActivity extends AppCompatActivity {
               && !busy
               && !polling
               && !navigationPending
-              && document != null) refreshQuietly();
+              && document != null) {
+            checkNextDay();
+            refreshQuietly();
+          }
           handler.postDelayed(this, 5000);
         }
       };
@@ -149,6 +156,7 @@ public final class MainActivity extends AppCompatActivity {
     relationIo.shutdownNow();
     cancelNavigation();
     navigationIo.shutdownNow();
+    availabilityIo.shutdownNow();
     io.shutdown();
     super.onDestroy();
   }
@@ -171,6 +179,7 @@ public final class MainActivity extends AppCompatActivity {
                   if (isDestroyed()) return;
                   busy = false;
                   ui.busy(false);
+                  updateNextDayButton();
                   lastError = null;
                   done.accept(result);
                 });
@@ -180,6 +189,7 @@ public final class MainActivity extends AppCompatActivity {
                   if (isDestroyed()) return;
                   busy = false;
                   ui.busy(false);
+                  updateNextDayButton();
                   lastError = DayNavigation.message(error);
                   ui.error(lastError);
                   if ((error instanceof VaultRepository.Conflict || DayNavigation.missing(error))
@@ -201,6 +211,7 @@ public final class MainActivity extends AppCompatActivity {
       VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
+    nextDays.clear();
     passwords.close();
     handler.removeCallbacks(expirePassword);
     cancelWeather();
@@ -371,97 +382,136 @@ public final class MainActivity extends AppCompatActivity {
 
   private void showDay() {
     screen = "day";
-    DayScreen.show(
-        ui,
-        day,
-        document,
-        template,
-        contentRules,
-        connected,
-        expanded,
-        sectionQuery,
-        new DayScreen.Actions() {
-          public void settings() {
-            if (!busy) showSettings();
-          }
+    nextDayButton =
+        DayScreen.show(
+            ui,
+            day,
+            document,
+            template,
+            contentRules,
+            connected,
+            nextDayIsAvailable(),
+            expanded,
+            sectionQuery,
+            new DayScreen.Actions() {
+              public void settings() {
+                if (!busy) showSettings();
+              }
 
-          public void pickVault() {
-            chooseVault();
-          }
+              public void pickVault() {
+                chooseVault();
+              }
 
-          public void navigate(int delta) {
-            if (!busy) {
-              navigateTo(day.plusDays(delta), false);
-            }
-          }
+              public void navigate(int delta) {
+                if (!busy && (delta <= 0 || nextDayIsAvailable())) {
+                  navigateTo(day.plusDays(delta), false);
+                }
+              }
 
-          public void chooseDate() {
-            if (!busy)
-              new DatePickerDialog(
-                      MainActivity.this,
-                      (picker, y, m, d) -> {
-                        navigateTo(LocalDate.of(y, m + 1, d), false);
-                      },
-                      day.getYear(),
-                      day.getMonthValue() - 1,
-                      day.getDayOfMonth())
-                  .show();
-          }
+              public void chooseDate() {
+                if (!busy)
+                  new DatePickerDialog(
+                          MainActivity.this,
+                          (picker, y, m, d) -> {
+                            navigateTo(LocalDate.of(y, m + 1, d), false);
+                          },
+                          day.getYear(),
+                          day.getMonthValue() - 1,
+                          day.getDayOfMonth())
+                      .show();
+              }
 
-          public void today() {
-            if (!busy) {
-              MainActivity.this.today();
-            }
-          }
+              public void today() {
+                if (!busy) {
+                  MainActivity.this.today();
+                }
+              }
 
-          public void add(String heading) {
-            if (!busy) startEditor(null, heading);
-          }
+              public void add(String heading) {
+                if (!busy) startEditor(null, heading);
+              }
 
-          public void edit(Markdown.Block block) {
-            if (!busy) startEditor(block, block.section().heading());
-          }
+              public void edit(Markdown.Block block) {
+                if (!busy) startEditor(block, block.section().heading());
+              }
 
-          public void refresh() {
-            if (!busy) loadDay();
-          }
+              public void refresh() {
+                if (!busy) loadDay();
+              }
 
-          public void searchChanged(String value) {
-            sectionQuery = value;
-          }
+              public void searchChanged(String value) {
+                sectionQuery = value;
+              }
 
-          public void delete(Markdown.Block block, boolean projection) {
-            deleteBlock(block, projection);
-          }
+              public void delete(Markdown.Block block, boolean projection) {
+                deleteBlock(block, projection);
+              }
 
-          public void toggle(DiaryTasks.Task task) {
-            toggleTask(task);
-          }
+              public void toggle(DiaryTasks.Task task) {
+                toggleTask(task);
+              }
 
-          public void appendTask(DiaryTasks.Task task) {
-            if (busy || document == null) return;
-            cancelWeather();
-            cancelNavigation();
-            try {
-              editor = EditorState.appendTask(path, document, template, task);
-              taskViewport = new TaskViewport(path, task.start(), ui.scroll.getScrollY());
-              recovery.save(editor, vault);
-              showEditor();
-            } catch (IllegalArgumentException error) {
-              ui.error(error.getMessage());
-            }
-          }
+              public void appendTask(DiaryTasks.Task task) {
+                if (busy || document == null) return;
+                cancelWeather();
+                cancelNavigation();
+                try {
+                  editor = EditorState.appendTask(path, document, template, task);
+                  taskViewport = new TaskViewport(path, task.start(), ui.scroll.getScrollY());
+                  recovery.save(editor, vault);
+                  showEditor();
+                } catch (IllegalArgumentException error) {
+                  ui.error(error.getMessage());
+                }
+              }
 
-          public void weather() {
-            startWeather();
-          }
+              public void weather() {
+                startWeather();
+              }
 
-          public void checklist(
-              Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed) {
-            loadChecklist(loaded, failed);
-          }
-        });
+              public void checklist(
+                  Consumer<List<DailyChecklist.Row>> loaded, Consumer<String> failed) {
+                loadChecklist(loaded, failed);
+              }
+            });
     if (lastError != null) ui.error(lastError);
+    checkNextDay();
+  }
+
+  private boolean nextDayIsAvailable() {
+    return connected && nextDays.available(vault, day);
+  }
+
+  private void updateNextDayButton() {
+    if (screen.equals("day") && nextDayButton != null)
+      DayScreen.setNextEnabled(nextDayButton, !busy && nextDayIsAvailable());
+  }
+
+  private void checkNextDay() {
+    if (!connected || !screen.equals("day")) return;
+    var request = nextDays.request(vault, day, SystemClock.elapsedRealtime());
+    if (request == null) return;
+    if (availabilityJob != null) availabilityJob.cancel(true);
+    SafVaultStorage selectedStorage = storage;
+    updateNextDayButton();
+    availabilityJob =
+        availabilityIo.submit(
+            () -> {
+              boolean available;
+              try {
+                available = DayNavigation.hasNext(selectedStorage, request.date());
+              } catch (Exception error) {
+                // A failed background probe never blocks navigation or changes the displayed note.
+                available = false;
+              }
+              boolean result = available;
+              runOnUiThread(
+                  () -> {
+                    if (isDestroyed() || storage != selectedStorage) return;
+                    if (nextDays.complete(request, result, SystemClock.elapsedRealtime()))
+                      updateNextDayButton();
+                  });
+            });
   }
 
   private void showDayKeepingPosition() {

@@ -17,6 +17,11 @@ public final class DayNavigation {
     }
   }
 
+  /** Probe only the next date's exact path; never search the archive or parse its content. */
+  public static boolean hasNext(VaultStorage storage, LocalDate current) throws IOException {
+    return storage.exists(DiaryLayout.path(current.plusDays(1)));
+  }
+
   public static Result open(VaultStorage storage, View current, LocalDate requested)
       throws IOException {
     String path = DiaryLayout.path(requested);

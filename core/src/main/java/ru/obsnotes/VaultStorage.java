@@ -7,6 +7,17 @@ import java.util.function.BooleanSupplier;
 public interface VaultStorage {
   String read(String path) throws IOException;
 
+  /** Providers should override this with a metadata-only query. */
+  default boolean exists(String path) throws IOException {
+    try {
+      read(path);
+      return true;
+    } catch (IOException error) {
+      if (DayNavigation.missing(error)) return false;
+      throw error;
+    }
+  }
+
   void write(String path, String text) throws IOException;
 
   List<String> dailyNotes() throws IOException;
