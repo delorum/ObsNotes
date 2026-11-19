@@ -712,6 +712,7 @@ public final class MainActivity extends AppCompatActivity {
         options.selected(),
         ignored -> null,
         true,
+        catalog::tagSearchLabel,
         selected -> {
           try {
             form.replaceTag(
@@ -780,6 +781,7 @@ public final class MainActivity extends AppCompatActivity {
   private void pickTags(boolean oneLine, boolean person, int cursor) {
     if (busy) return;
     EditorState form = editor.activePart();
+    var catalog = form.routingCatalog(template);
     SearchPicker.show(
         ui,
         oneLine ? "Показать строку в разделах" : "Показать блок в разделах",
@@ -789,6 +791,9 @@ public final class MainActivity extends AppCompatActivity {
                 CrossReferences.selectable(template, person), CrossReferences.Destination::heading),
         d -> d.id() + " · " + d.title(),
         true,
+        List.of(),
+        ignored -> null,
+        catalog::tagSearchLabel,
         selected -> {
           form.addTags(
               cursor,

@@ -14,11 +14,12 @@ public record TagChoices(
     List<CrossReferences.Destination> items =
         new ArrayList<>(CrossReferences.selectable(template, person));
     List<CrossReferences.Destination> selected = new ArrayList<>();
+    var known = CrossReferences.tagDestinations(template, person);
     StringBuilder unknown = new StringBuilder();
     int at = 0;
     while (at < ids.length()) {
       CrossReferences.Destination found = null;
-      for (var item : items)
+      for (var item : known)
         if (ids.regionMatches(true, at, item.id(), 0, item.id().length())
             && (found == null || item.id().length() > found.id().length())) found = item;
       if (found == null) {
@@ -26,6 +27,7 @@ public record TagChoices(
         continue;
       }
       flush(unknown, items, selected);
+      if (!items.contains(found)) items.add(found);
       if (!selected.contains(found)) selected.add(found);
       at += found.id().length();
     }

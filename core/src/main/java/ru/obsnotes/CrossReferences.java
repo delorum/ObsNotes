@@ -13,13 +13,30 @@ public final class CrossReferences {
 
   public record Projection(Markdown.Block origin, String text) {}
 
-  public static List<Destination> selectable(Markdown template, boolean person) {
-    Set<String> people = Set.of("Лена", "Аня", "Вика", "Мама");
+  private static final Set<String> PEOPLE = Set.of("Лена", "Аня", "Вика", "Мама");
+
+  /** One canonical, tag-compatible identifier per section, shared with whole-block routing. */
+  public static List<Destination> sectionDestinations(Markdown template) {
+    Map<String, Destination> sections = new LinkedHashMap<>();
+    for (Destination destination : destinations(template))
+      if (destination.id().matches("[\\p{L}]+"))
+        sections.putIfAbsent(destination.heading(), destination);
+    return List.copyOf(sections.values());
+  }
+
+  /** Existing aliases remain resolvable; a section's primary ID owns collisions with aliases. */
+  public static List<Destination> tagDestinations(Markdown template, boolean person) {
     Map<String, Destination> unique = new LinkedHashMap<>();
-    for (Destination d : destinations(template))
-      if (d.id.matches("[\\p{L}]+") && (!person || people.contains(d.id)))
-        unique.putIfAbsent(d.id, d);
+    List<Destination> all = new ArrayList<>(sectionDestinations(template));
+    all.addAll(destinations(template));
+    for (Destination destination : all)
+      if (destination.id().matches("[\\p{L}]+") && (!person || PEOPLE.contains(destination.id())))
+        unique.putIfAbsent(destination.id().toLowerCase(Locale.ROOT), destination);
     return List.copyOf(unique.values());
+  }
+
+  public static List<Destination> selectable(Markdown template, boolean person) {
+    return person ? tagDestinations(template, true) : sectionDestinations(template);
   }
 
   public static List<Destination> destinations(Markdown template) {

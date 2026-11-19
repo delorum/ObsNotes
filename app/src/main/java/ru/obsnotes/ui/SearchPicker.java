@@ -63,7 +63,7 @@ public final class SearchPicker {
     show(ui, title, items, label, multi, initial, validate, false, searchLabel, select);
   }
 
-  private static <T> void show(
+  public static <T> void show(
       Ui ui,
       String title,
       List<T> items,

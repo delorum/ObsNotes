@@ -51,10 +51,10 @@ public final class Routing {
 
     public Catalog(Markdown destination, Markdown template) {
       Map<String, String> byHeading = new LinkedHashMap<>();
-      for (var d : CrossReferences.destinations(template)) {
+      for (var d : CrossReferences.destinations(template))
         aliases.computeIfAbsent(d.heading(), ignored -> new ArrayList<>()).add(d.id());
-        if (d.id().matches("[\\p{L}]+")) byHeading.putIfAbsent(d.heading(), d.id());
-      }
+      for (var d : CrossReferences.sectionDestinations(template))
+        byHeading.put(d.heading(), d.id());
       List<Choice> rows = new ArrayList<>();
       for (var t : destination.targets(template)) {
         String id =
@@ -134,6 +134,14 @@ public final class Routing {
           fields.stream().filter(field -> field.heading().equals(heading)).toList(),
           query,
           FieldHit::searchLabel);
+    }
+
+    public String tagSearchLabel(CrossReferences.Destination destination) {
+      return destination.id()
+          + "\n"
+          + destination.title()
+          + "\n"
+          + String.join(", ", aliases.getOrDefault(destination.heading(), List.of()));
     }
 
     public String pickerLabel(Choice choice) {
