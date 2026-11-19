@@ -3,7 +3,6 @@ package ru.obsnotes;
 import java.io.*;
 import java.time.LocalDate;
 import java.util.*;
-import java.util.regex.*;
 
 /** Pages of calendar dates, addressed directly. Folder enumeration is never needed. */
 public final class PastDays {
@@ -32,23 +31,10 @@ public final class PastDays {
   }
 
   public static String description(String source) {
-    boolean fence = false;
-    char marker = 0;
-    int length = 0;
-    for (String line : source.split("\\r?\\n")) {
-      Matcher code = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$").matcher(line);
-      if (code.matches()) {
-        if (!fence) {
-          fence = true;
-          marker = code.group(1).charAt(0);
-          length = code.group(1).length();
-        } else if (code.group(1).charAt(0) == marker
-            && code.group(1).length() >= length
-            && code.group(2).isBlank()) fence = false;
-        continue;
-      }
-      if (fence) continue;
-      String value = line.strip();
+    String text = source.startsWith("\ufeff") ? source.substring(1) : source;
+    for (var line : MarkdownLines.scan(text)) {
+      if (line.literal()) continue;
+      String value = line.text().strip();
       if (value.startsWith("[") && value.endsWith("]"))
         value = value.substring(1, value.length() - 1).strip();
       if (value.startsWith("ShortDescr::")) return value.substring("ShortDescr::".length()).strip();

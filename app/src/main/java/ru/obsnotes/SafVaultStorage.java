@@ -68,6 +68,8 @@ public final class SafVaultStorage implements VaultStorage {
         DocumentsContract.buildDocumentUriUsingTree(
             tree, DocumentsContract.getTreeDocumentId(tree));
     for (String part : path.split("/")) {
+      if (Thread.currentThread().isInterrupted())
+        throw new InterruptedIOException("Проверка отменена");
       Entry found = null;
       for (Entry e : children(current))
         if (e.name.equals(part)) {
@@ -91,11 +93,48 @@ public final class SafVaultStorage implements VaultStorage {
                 null,
                 null,
                 null)) {
-      if (cursor == null) throw new IOException("Проверка файла недоступна");
+      if (cursor == null) {
+        var failure = new IOException("Проверка файла недоступна");
+        if (missingPath(path, failure) != null) return false;
+        throw failure;
+      }
       return cursor.moveToFirst();
     } catch (FileNotFoundException missing) {
       return false;
+    } catch (SecurityException | IllegalArgumentException failure) {
+      if (missingPath(path, failure) != null) return false;
+      throw failure;
     }
+  }
+
+  /** A provider may return null or wrap a missing document as a runtime exception. */
+  private FileNotFoundException missingPath(String path, Throwable failure) throws IOException {
+    if (!DayNavigation.missing(failure)) {
+      if (!"com.android.externalstorage.documents".equals(tree.getAuthority())) return null;
+      int slash = path.lastIndexOf('/');
+      if (slash > 0) {
+        try {
+          for (var entry : children(resolve(path.substring(0, slash))))
+            if (entry.name().equals(path.substring(slash + 1))) return null;
+          var missing = new FileNotFoundException(path);
+          missing.initCause(failure);
+          return missing;
+        } catch (IOException | SecurityException | IllegalArgumentException unavailableParent) {
+          if (Thread.currentThread().isInterrupted())
+            throw new InterruptedIOException("Проверка отменена");
+          // A missing parent or expired grant still requires checking the named components.
+        }
+      }
+      try {
+        resolveByComponents(path);
+        return null;
+      } catch (FileNotFoundException absent) {
+        // Only the explicitly requested components are checked, never the diary archive.
+      }
+    }
+    var missing = new FileNotFoundException(path);
+    missing.initCause(failure);
+    return missing;
   }
 
   public String read(String path) throws IOException {
@@ -112,16 +151,8 @@ public final class SafVaultStorage implements VaultStorage {
       }
       return out.toString(StandardCharsets.UTF_8.name());
     } catch (SecurityException | IllegalArgumentException failure) {
-      // ExternalStorage's enforceTree can wrap FileNotFoundException as a runtime error.
-      // Check only the named path components on this failure; never scan the diary archive.
-      if ("com.android.externalstorage.documents".equals(tree.getAuthority())) {
-        try {
-          resolveByComponents(path);
-        } catch (FileNotFoundException missing) {
-          missing.initCause(failure);
-          throw missing;
-        }
-      }
+      var missing = missingPath(path, failure);
+      if (missing != null) throw missing;
       throw failure;
     }
   }

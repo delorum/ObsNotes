@@ -166,7 +166,7 @@ public final class DayScreen {
 
   public static void setNextEnabled(MaterialButton button, boolean enabled) {
     button.setEnabled(enabled);
-    button.setIconTint(ColorStateList.valueOf(enabled ? Ui.INK : Ui.MUTED));
+    button.setIconTint(ColorStateList.valueOf(enabled ? Ui.INK : Ui.DISABLED));
   }
 
   private static void section(

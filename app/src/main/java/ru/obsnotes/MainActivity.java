@@ -1,6 +1,5 @@
 package ru.obsnotes;
 
-import android.app.DatePickerDialog;
 import android.content.*;
 import android.net.Uri;
 import android.os.*;
@@ -34,6 +33,8 @@ public final class MainActivity extends AppCompatActivity {
   private Future<?> navigationJob;
   private final ExecutorService availabilityIo = Executors.newSingleThreadExecutor();
   private Future<?> availabilityJob;
+  private final ExecutorService calendarIo = Executors.newSingleThreadExecutor();
+  private android.app.Dialog dateCalendar;
   private com.google.android.material.button.MaterialButton nextDayButton;
   private final NextDayAvailability nextDays = new NextDayAvailability();
   private long navigationVersion;
@@ -127,6 +128,7 @@ public final class MainActivity extends AppCompatActivity {
   protected void onPause() {
     foreground = false;
     handler.removeCallbacks(poll);
+    if (dateCalendar != null) dateCalendar.dismiss();
     if (editor != null
         && connected
         && screen.equals("editor")
@@ -160,6 +162,8 @@ public final class MainActivity extends AppCompatActivity {
     cancelNavigation();
     navigationIo.shutdownNow();
     availabilityIo.shutdownNow();
+    if (dateCalendar != null) dateCalendar.dismiss();
+    calendarIo.shutdownNow();
     io.shutdown();
     super.onDestroy();
   }
@@ -214,6 +218,7 @@ public final class MainActivity extends AppCompatActivity {
       VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
+    if (dateCalendar != null) dateCalendar.dismiss();
     nextDays.clear();
     passwords.close();
     handler.removeCallbacks(expirePassword);
@@ -413,16 +418,7 @@ public final class MainActivity extends AppCompatActivity {
               }
 
               public void chooseDate() {
-                if (!busy)
-                  new DatePickerDialog(
-                          MainActivity.this,
-                          (picker, y, m, d) -> {
-                            navigateTo(LocalDate.of(y, m + 1, d), false);
-                          },
-                          day.getYear(),
-                          day.getMonthValue() - 1,
-                          day.getDayOfMonth())
-                      .show();
+                showDateCalendar();
               }
 
               public void today() {
@@ -480,6 +476,52 @@ public final class MainActivity extends AppCompatActivity {
             });
     if (lastError != null) ui.error(lastError);
     checkNextDay();
+  }
+
+  private void showDateCalendar() {
+    if (busy || !connected || dateCalendar != null && dateCalendar.isShowing()) return;
+    SafVaultStorage selectedStorage = storage;
+    DayContentRules rules = contentRules;
+    CalendarDays.Day current =
+        document == null ? null : new CalendarDays.Day(day, CalendarDays.assess(document, rules));
+    dateCalendar =
+        DayCalendarDialog.show(
+            ui,
+            day,
+            current,
+            (month, known, loaded, failed) -> {
+              var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+              Future<?> job =
+                  calendarIo.submit(
+                      () -> {
+                        try {
+                          CalendarDays.load(
+                              selectedStorage,
+                              month,
+                              rules,
+                              known,
+                              () -> cancelled.get() || Thread.currentThread().isInterrupted(),
+                              entry ->
+                                  runOnUiThread(
+                                      () -> {
+                                        if (!isDestroyed() && !cancelled.get())
+                                          loaded.accept(entry);
+                                      }));
+                        } catch (Exception error) {
+                          if (!cancelled.get())
+                            runOnUiThread(
+                                () -> {
+                                  if (!isDestroyed() && !cancelled.get())
+                                    failed.accept(DayNavigation.message(error));
+                                });
+                        }
+                      });
+              return () -> {
+                cancelled.set(true);
+                job.cancel(true);
+              };
+            },
+            selected -> navigateTo(selected, false));
   }
 
   private boolean nextDayIsAvailable() {

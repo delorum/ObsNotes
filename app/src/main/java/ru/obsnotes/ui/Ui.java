@@ -19,6 +19,7 @@ public final class Ui {
       CARD = 0xff282e38,
       INK = 0xffe6e7ec,
       MUTED = 0xffa0abbd,
+      DISABLED = 0xff596170,
       ACCENT = 0xffb5a3e8,
       GREEN = 0xffa7cd65,
       RED = 0xffef737c;

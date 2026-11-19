@@ -327,6 +327,99 @@ class ValuePartsTest(unittest.TestCase):
         self.assertEqual(stamp, d.adb('shell', 'stat', '-c', '%y', d.PHONE + '/' + self.relative))
         print('Phone: empty second card, last-tag deletion, cursor outlines, reassignment and no-op save passed', flush=True)
 
+    def test_8_calendar_status_colors_old_year_navigation_and_dark_arrow(self):
+        month_dates = [self.today.replace(day=i) for i in range(1, 29) if i != self.today.day]
+        complete, pending, missing_summary, prompt, absent, placeholder = month_dates[:6]
+        old = self.today.replace(year=self.today.year - 1, day=1)
+
+        def note(notes, summary):
+            return '## Заметки\n\n' + notes + '\n\n## Итог\n' + (
+                '' if summary is None else 'ShortDescr:: ' + summary + '\n')
+
+        def put_date(date, text):
+            path = p.relative(date)
+            d.adb('shell', 'mkdir', '-p', (d.PHONE + '/' + path).rsplit('/', 1)[0])
+            e.put(path, text)
+
+        put_date(complete, note('', 'CalendarFilled'))
+        put_date(pending, note('CalendarPending', 'Filled'))
+        put_date(missing_summary, note('', None))
+        put_date(prompt, note('', 'Заполни краткое описание!'))
+        put_date(placeholder, note('PhotoFixture', 'Filled'))
+        put_date(old, note('', 'OldCalendarFilled'))
+
+        def date_node(date, state=None):
+            prefix = 'Дата ' + date.isoformat() + ' · '
+            return next((n for n in d.tree().iter('node')
+                         if n.get('content-desc', '').startswith(prefix)
+                         and (state is None or n.get('content-desc') == prefix + state)), None)
+
+        def ready(date, state):
+            d.wait_for(lambda: date_node(date, state) is not None)
+            return date_node(date, state)
+
+        def calendar():
+            d.tap(d.find(desc='Выбрать дату. Удерживайте, чтобы открыть сегодня', down=False))
+            d.wait_for(lambda: bool(d.nodes(d.tree(), desc='Выбрать месяц и год')))
+
+        d.wait_for(lambda: d.nodes(d.tree(), desc='Следующий день')[0].get('enabled') == 'false')
+        arrow = d.nodes(d.tree(), desc='Следующий день')[0]
+        self.assertGreater(e.pixels(arrow, (89, 97, 112)), 0)
+        self.assertEqual(0, e.pixels(arrow, (160, 171, 189)))
+        calendar()
+        for date, state, color in ((complete, 'Заполнено', (230, 231, 236)),
+                                   (pending, 'Нужно разобрать', (239, 115, 124)),
+                                   (missing_summary, 'Нужно разобрать', (239, 115, 124)),
+                                   (prompt, 'Нужно разобрать', (239, 115, 124)),
+                                   (placeholder, 'Заполнено', (230, 231, 236))):
+            cell = ready(date, state)
+            self.assertEqual('true', cell.get('enabled'))
+            self.assertGreater(e.pixels(cell, color), 0, date.isoformat())
+        disabled = ready(absent, 'Заметки нет')
+        self.assertEqual('false', disabled.get('enabled'))
+        d.tap(disabled)
+        self.assertIsNotNone(d.find(desc='Выбрать месяц и год'))
+        from pathlib import Path
+        Path('/tmp/obsnotes-calendar-device.png').write_bytes(d.adb('exec-out', 'screencap', '-p'))
+        print('Phone: calendar red/white/disabled date pixels, placeholders and darker arrow passed', flush=True)
+
+        d.tap(d.find(desc='Выбрать месяц и год'))
+        tree = d.tree()
+        year = next(n for n in tree.iter('node')
+                    if n.get('resource-id', '').endswith('/date_picker_header_year'))
+        d.tap(year)
+        d.tap(d.find(text=str(old.year)))
+        ok = next(n for n in d.tree().iter('node') if n.get('resource-id') == 'android:id/button1')
+        d.tap(ok)
+        older = ready(old, 'Заполнено')
+        self.assertGreater(e.pixels(older, (230, 231, 236)), 0)
+        d.tap(older)
+        d.wait_for(lambda: bool(d.nodes(d.tree(), desc='Поиск разделов')))
+        caption = d.nodes(d.tree(), desc='Выбрать дату. Удерживайте, чтобы открыть сегодня')[0].get('text')
+        self.assertIn(str(old.year), caption)
+        d.query('OldCalendarFilled')
+        self.assertIsNotNone(d.find(desc='Dataview: ShortDescr:: OldCalendarFilled'))
+        print('Phone: month/year jump and one-tap navigation into an existing older note passed', flush=True)
+
+        d.tap(d.find(desc='Сегодня', down=False))
+        d.wait_for(lambda: str(self.today.year) in d.nodes(d.tree(), desc='Выбрать дату. Удерживайте, чтобы открыть сегодня')[0].get('text', ''))
+        d.query('')
+        calendar()
+        selected = ready(complete, 'Заполнено')
+        d.adb('shell', 'rm', d.PHONE + '/' + p.relative(complete))
+        d.tap(selected)
+        d.wait_for(lambda: bool(d.nodes(d.tree(), text='Заметка не найдена')))
+        caption = d.nodes(d.tree(), desc='Выбрать дату. Удерживайте, чтобы открыть сегодня')[0].get('text')
+        self.assertTrue(caption.startswith(str(self.today.day) + ' '))
+        self.assertIn(str(self.today.year), caption)
+        put_date(complete, note('NewPending', 'Filled'))
+        calendar()
+        changed = ready(complete, 'Нужно разобрать')
+        self.assertGreater(e.pixels(changed, (239, 115, 124)), 0)
+        d.adb('shell', 'input', 'keyevent', '4')
+        self.assertEqual(SOURCE, self.note())
+        print('Phone: missing-file race retains current note and reopened calendar reloads changed status', flush=True)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
