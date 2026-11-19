@@ -44,10 +44,15 @@ public final class DiaryIndex {
   }
 
   public List<Events.Root> roots(VaultStorage storage, EditorState form) throws IOException {
+    return roots(storage, form, DayContentRules.EMPTY);
+  }
+
+  public List<Events.Root> roots(VaultStorage storage, EditorState form, DayContentRules rules)
+      throws IOException {
     String selected = form.destinationPath;
     Markdown current = read(storage, selected);
     int except = !form.fresh && selected.equals(form.sourcePath) ? form.start : -1;
-    return roots(selected, current, except);
+    return roots(selected, current, except, rules);
   }
 
   public String rootSnapshot(VaultStorage storage, EditorState form, Events.Root root)
@@ -69,12 +74,19 @@ public final class DiaryIndex {
   }
 
   public List<Events.Root> roots(String path, Markdown document, int exceptStart) {
+    return roots(path, document, exceptStart, DayContentRules.EMPTY);
+  }
+
+  public List<Events.Root> roots(
+      String path, Markdown document, int exceptStart, DayContentRules rules) {
     List<Events.Root> list = new ArrayList<>();
     for (var b : document.blocks) {
       if (b.start() == exceptStart) continue;
       String id = Events.rootId(b.text());
-      if (!id.isEmpty() || !b.text().contains("#^") && !b.text().contains("```"))
-        list.add(new Events.Root(path, b, id));
+      if (!id.isEmpty() || !b.text().contains("#^") && !b.text().contains("```")) {
+        var root = new Events.Root(path, b, id);
+        if (!root.visibleText(rules).isBlank()) list.add(root);
+      }
     }
     return List.copyOf(list);
   }

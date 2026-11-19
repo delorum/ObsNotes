@@ -814,13 +814,14 @@ public final class MainActivity extends AppCompatActivity {
     EditorState form = editor.activePart();
     int part = editor.parts == null ? -1 : editor.parts.selected;
     work(
-        () -> index.roots(storage, form),
+        () -> index.roots(storage, form, contentRules),
         list ->
             SearchPicker.show(
                 ui,
                 replacing == null ? "Добавить связь с корнем" : "Изменить связь",
                 list,
-                root -> (root.id().isEmpty() ? "Создать корневой · " : "") + root.label(),
+                root ->
+                    (root.id().isEmpty() ? "Создать корневой · " : "") + root.label(contentRules),
                 false,
                 selected ->
                     work(

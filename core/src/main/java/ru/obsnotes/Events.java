@@ -13,6 +13,21 @@ public final class Events {
     public String label() {
       return DiaryLayout.fileName(path) + " / " + block.section().title() + " / " + caption(block);
     }
+
+    public String visibleText(DayContentRules rules) {
+      String source = block.text();
+      int callout = rootCalloutStart(source);
+      if (!id.isEmpty() && callout >= 0) source = source.substring(0, callout);
+      return rules.view(source).text();
+    }
+
+    public String label(DayContentRules rules) {
+      return DiaryLayout.fileName(path)
+          + " / "
+          + block.section().title()
+          + " / "
+          + caption(visibleText(rules));
+    }
   }
 
   public static String id(String text) {
@@ -112,8 +127,12 @@ public final class Events {
   }
 
   public static String caption(Markdown.Block block) {
+    return caption(block.text());
+  }
+
+  private static String caption(String text) {
     String label =
-        CrossReferences.clean(block.text())
+        CrossReferences.clean(text)
             .lines()
             .filter(
                 line ->
