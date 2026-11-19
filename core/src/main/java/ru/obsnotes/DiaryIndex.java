@@ -88,6 +88,8 @@ public final class DiaryIndex {
         if (!root.visibleText(rules).isBlank()) list.add(root);
       }
     }
+    // Stable sort retains note order within existing roots and new-root candidates.
+    list.sort(Comparator.comparing(root -> root.id().isEmpty()));
     return List.copyOf(list);
   }
 }

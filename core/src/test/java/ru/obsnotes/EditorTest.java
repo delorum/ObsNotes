@@ -88,7 +88,7 @@ public class EditorTest {
             "## Заметки\n\nтекущий\n\n## Утро\n\nкандидат\n\n" + Events.root("корневой") + "\n");
     var roots = new DiaryIndex().roots("day.md", m, m.blocks.get(0).start());
     assertEquals(2, roots.size());
-    assertEquals("", roots.get(0).id());
-    assertTrue(roots.get(1).id().startsWith("event-"));
+    assertTrue(roots.get(0).id().startsWith("event-"));
+    assertEquals("", roots.get(1).id());
   }
 }
