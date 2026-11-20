@@ -492,7 +492,7 @@ class ValuePartsTest(unittest.TestCase):
             '### OtherChild\nSiblingKey:: IgnoreMe\n')
         e.put(self.relative, original)
         d.tap(d.find(desc='Обновить', down=False))
-        d.query('ExactNeedle')
+        d.query('HitKey')
         tree = d.tree()
         self.assertTrue(d.nodes(tree, desc='Развернуть раздел SearchParent'))
         self.assertTrue(d.nodes(tree, desc='Развернуть раздел SearchChild'))
@@ -592,7 +592,7 @@ class ValuePartsTest(unittest.TestCase):
         tree=d.tree()
         self.assertTrue(d.nodes(tree,desc='Развернуть раздел FactsGroup'))
         self.assertTrue(d.nodes(tree,desc='Развернуть раздел LeafFields'))
-        self.assertTrue(d.nodes(tree,desc='Dataview: TargetKey:: NeedleTarget'))
+        self.assertFalse(d.nodes(tree,desc='Dataview: TargetKey:: NeedleTarget'))
         self.assertTrue(d.nodes(tree,desc='Редактировать задачу: NeedleTargetTask'))
         for label in ('OtherKey:: IgnoreValue','IgnoreTask','ParentOther','FirstEntry'):
             self.assertFalse(d.nodes(tree,text=label),label)
@@ -617,70 +617,58 @@ class ValuePartsTest(unittest.TestCase):
         self.assertFalse(d.nodes(tree,text='FirstEntry'))
         print('Phone: ordinary entry opens from a name result, unchanged exit preserves bytes/mtime, clear collapses all',flush=True)
 
-    def test_13_titles_ignore_shared_ids_and_plain_blocks_match_and_expand(self):
+
+    def test_13_titles_keys_and_tasks_ignore_plain_text_and_dataview_values(self):
         original = ('## Заметки\n\nMoveMe\n\n'
             + cross('## RedPerson','ChildrenShared') + 'RedEntry\n\n'
             + cross('## BluePerson','ChildrenShared') + 'BlueEntry\n\n'
             + '## Children together\nTogetherEntry\n\n'
-              '## FamilyGroup\nParentUnrelated\n\n### LeafPlain\n'
-              'Opening context\nNeedle middle\nEnding context\n\nUnmatchedLocal\n\n'
+              '## FamilyGroup\nParentUnrelated\n\n### LeafKeys\n'
+              'Opening context\nNeedle middle\nEnding context\n\n'
+              'PlaceMetric:: UniqueValue\nOtherKey:: IgnoreValue\n\n'
               '### Sibling\nSiblingEntry\n\n'
-              '## Mixed\nContext line\nNeedle prose\nMetric:: Needle\n\n'
-              '## FactsGroup\nField:: FieldOnly\n- [ ] #task/diary/fact TaskOnly\n')
+              '## FactsGroup\nField:: FieldOnly\n- [ ] #task/diary/fact Routine; TaskDetail\n')
         d.adb('shell','am','force-stop','ru.obsnotes')
         e.put(self.relative,original)
         e.put('Шаблоны/Шаблон дневниковой записи.md',original)
         self.start()
+        stamp=d.adb('shell','stat','-c','%y',d.PHONE+'/'+self.relative)
+        for query in ('ndlmdl','Needle','Opening','UniqueValue','unqvl','FieldOnly','ChildrenShared'):
+            d.query(query)
+            self.assertTrue(d.nodes(d.tree(),text='Разделы не найдены'),query)
+        print('Phone: prose, Dataview values and hidden ids do not match exact or fuzzy queries',flush=True)
         d.query('children')
         tree=d.tree()
         headers=[n.get('content-desc') for n in tree.iter('node')
                  if n.get('content-desc','').startswith('Развернуть раздел ')]
         self.assertEqual(['Развернуть раздел Children together'],headers)
         self.assertTrue(d.nodes(tree,text='TogetherEntry'))
-        d.query('chldrn')
-        self.assertTrue(d.nodes(d.tree(),text='TogetherEntry'))
-        self.assertFalse(d.nodes(d.tree(),desc='Развернуть раздел RedPerson'))
-        self.assertFalse(d.nodes(d.tree(),desc='Развернуть раздел BluePerson'))
-        d.query('ChildrenShared')
-        self.assertTrue(d.nodes(d.tree(),text='Разделы не найдены'))
-        print('Phone: shared section ids no longer match; only the actual matching title is shown',flush=True)
-        d.query('ndlmdl')
+        for query in ('PlaceMetric','pmtrc'):
+            d.query(query)
+            tree=d.tree()
+            self.assertTrue(d.nodes(tree,desc='Развернуть раздел FamilyGroup'))
+            self.assertTrue(d.nodes(tree,desc='Развернуть раздел LeafKeys'))
+            self.assertTrue(d.nodes(tree,desc='Dataview: PlaceMetric:: UniqueValue'))
+            self.assertFalse(d.nodes(tree,text='Opening context'))
+            self.assertFalse(d.nodes(tree,text='OtherKey:: IgnoreValue'))
+        Path('/tmp/obsnotes-key-only-device.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        print('Phone: exact/fuzzy key names reveal their current values and ancestors without unrelated prose/fields',flush=True)
+        d.query('tskdtl')
         tree=d.tree()
-        full='Opening context\nNeedle middle\nEnding context'
-        self.assertTrue(d.nodes(tree,desc='Развернуть раздел FamilyGroup'))
-        self.assertTrue(d.nodes(tree,desc='Развернуть раздел LeafPlain'))
-        self.assertTrue(d.nodes(tree,text=full),'Matching text below first line must be expanded immediately')
-        for text in ('ParentUnrelated','UnmatchedLocal','SiblingEntry','RedEntry','BlueEntry'):
-            self.assertFalse(d.nodes(tree,text=text),text)
-        Path('/tmp/obsnotes-text-search-device.png').write_bytes(d.adb('exec-out','screencap','-p'))
-        stamp=d.adb('shell','stat','-c','%y',d.PHONE+'/'+self.relative)
-        d.tap(d.nodes(tree,text='Opening context')[0])
-        d.wait_for(d.keyboard_shown)
-        self.assertEqual(full,e.input_field().get('text'))
-        self.save()
+        self.assertTrue(d.nodes(tree,desc='Редактировать задачу: Routine; TaskDetail'))
+        self.assertFalse(d.nodes(tree,desc='Dataview: Field:: FieldOnly'))
+        d.query('fmlgrp')
+        self.assertIsNotNone(d.find(text='ParentUnrelated'))
+        self.assertIsNotNone(d.find(text='Opening context'))
+        self.assertIsNotNone(d.find(text='SiblingEntry'))
         self.assertEqual(original,self.note())
         self.assertEqual(stamp,d.adb('shell','stat','-c','%y',d.PHONE+'/'+self.relative))
-        self.assertTrue(d.nodes(d.tree(),text=full))
-        print('Phone: fuzzy body match expands block and ancestors, keeps every block line, opens original and exits without a write',flush=True)
-        d.query('Needle')
-        mixed='Context line\nNeedle prose\nMetric:: Needle'
-        self.assertIsNotNone(d.find(text=mixed))
-        self.assertFalse(d.nodes(d.tree(),desc='Dataview: Metric:: Needle'),'Whole matched block must not duplicate its field in another row')
-        d.query('FieldOnly')
-        tree=d.tree()
-        self.assertTrue(d.nodes(tree,desc='Dataview: Field:: FieldOnly'))
-        self.assertFalse(d.nodes(tree,desc='Редактировать задачу: TaskOnly'))
-        d.query('TaskOnly')
-        tree=d.tree()
-        self.assertTrue(d.nodes(tree,desc='Редактировать задачу: TaskOnly'))
-        self.assertFalse(d.nodes(tree,desc='Dataview: Field:: FieldOnly'))
-        self.assertEqual(original,self.note())
         d.tap(d.find(desc='Очистить поиск',down=False))
         p.hide_ime()
         tree=d.tree()
-        self.assertFalse(d.nodes(tree,text=full))
-        self.assertFalse(d.nodes(tree,desc='Развернуть раздел LeafPlain'))
-        print('Phone: mixed text/field block has no duplicate field, structured hits remain filtered, clear collapses results',flush=True)
+        self.assertFalse(d.nodes(tree,text='Opening context'))
+        self.assertFalse(d.nodes(tree,desc='Развернуть раздел LeafKeys'))
+        print('Phone: task text still matches; title matches show full contents, clear collapses; source bytes/mtime unchanged',flush=True)
 
 
 if __name__ == '__main__':

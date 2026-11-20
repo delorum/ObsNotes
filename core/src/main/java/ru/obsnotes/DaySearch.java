@@ -3,19 +3,15 @@ package ru.obsnotes;
 import java.util.*;
 
 /**
- * Match section titles, structured values and visible note text; preserve original source ranges.
+ * Match section titles, Dataview key names and diary task text; preserve original source ranges.
  */
 public final class DaySearch {
   private record Entry(
-      DayContentRules.Item item, MarkdownLines.Line line, String label, boolean counted) {
-    boolean block() {
-      return line == null;
-    }
-  }
+      DayContentRules.Item item, MarkdownLines.Line line, String label, boolean counted) {}
 
   private static final class Selected {
     final List<MarkdownLines.Line> lines = new ArrayList<>();
-    boolean block, counted;
+    boolean counted;
   }
 
   private record Node(
@@ -27,10 +23,7 @@ public final class DaySearch {
   private final List<Node> roots;
   private final Set<String> allHeadings;
 
-  public record Result(
-      List<DayOutline.Section> sections,
-      Set<String> fullHeadings,
-      Set<DayContentRules.Item> textMatches) {}
+  public record Result(List<DayOutline.Section> sections, Set<String> fullHeadings) {}
 
   public DaySearch(List<DayOutline.Section> outline) {
     this(outline, DayContentRules.EMPTY);
@@ -51,15 +44,13 @@ public final class DaySearch {
         if (line.literal()) continue;
         var field = Markdown.FIELD.matcher(CrossReferences.clean(line.text()));
         String label = null;
-        if (field.matches()) label = field.group(1) + "\n" + field.group(2).strip();
+        if (field.matches()) label = field.group(1);
         else if (DiaryTasks.isDiary(line.text())) {
           String task = new DiaryTasks.Task(0, line.text(), false).label();
           label = task + "\n" + task.split(";", 2)[0].strip();
         }
         if (label != null) entries.add(new Entry(item, line, label, rules.countable(line.text())));
       }
-      String body = textLabel(item);
-      if (!body.isBlank()) entries.add(new Entry(item, null, body, item.view().counted()));
     }
     return new Node(
         section,
@@ -73,24 +64,10 @@ public final class DaySearch {
   }
 
   public Result result(String query) {
-    if (query.isBlank()) return new Result(original, allHeadings, Set.of());
+    if (query.isBlank()) return new Result(original, allHeadings);
     Set<String> full = new LinkedHashSet<>();
-    Set<DayContentRules.Item> text = new LinkedHashSet<>();
-    var sections = filtered(roots, query, full, text).stream().map(Hit::section).toList();
-    return new Result(sections, Set.copyOf(full), Set.copyOf(text));
-  }
-
-  /** One visible block is one field; line breaks inside it do not split the search term. */
-  private static String textLabel(DayContentRules.Item item) {
-    String body = CrossReferences.clean(item.view().raw());
-    List<String> lines = new ArrayList<>();
-    for (var line : MarkdownLines.scan(body)) {
-      if (line.literal() || line.text().isBlank()) continue;
-      if (Markdown.FIELD.matcher(line.text()).matches() || DiaryTasks.isDiary(line.text()))
-        continue;
-      lines.add(line.text());
-    }
-    return String.join(" ", lines).strip();
+    var sections = filtered(roots, query, full).stream().map(Hit::section).toList();
+    return new Result(sections, Set.copyOf(full));
   }
 
   private static void includeWhole(DayOutline.Section section, Set<String> headings) {
@@ -128,8 +105,7 @@ public final class DaySearch {
     return List.copyOf(result);
   }
 
-  private static List<Hit> filtered(
-      List<Node> nodes, String query, Set<String> full, Set<DayContentRules.Item> text) {
+  private static List<Hit> filtered(List<Node> nodes, String query, Set<String> full) {
     List<Hit> hits = new ArrayList<>();
     for (Node node : nodes) {
       int nameRank = FuzzySearch.rank(node.label(), query);
@@ -140,26 +116,19 @@ public final class DaySearch {
         rank = Math.min(rank, FuzzySearch.rank(entry.label(), query));
         Selected selected = grouped.computeIfAbsent(entry.item(), ignored -> new Selected());
         selected.counted |= entry.counted();
-        if (entry.block()) {
-          selected.block = true;
-          text.add(entry.item());
-        } else selected.lines.add(entry.line());
+        selected.lines.add(entry.line());
       }
       List<DayContentRules.Item> items = new ArrayList<>();
       for (var entry : grouped.entrySet()) {
         var item = entry.getKey();
         var selected = entry.getValue();
-        if (selected.block) {
-          items.add(item);
-          continue;
-        }
         var visible = List.copyOf(selected.lines);
         String raw = String.join("\n", visible.stream().map(MarkdownLines.Line::text).toList());
         var view =
             new DayContentRules.View(visible, raw, CrossReferences.clean(raw), selected.counted);
         items.add(new DayContentRules.Item(item.original(), item.projection(), view));
       }
-      var children = filtered(node.children(), query, full, text);
+      var children = filtered(node.children(), query, full);
       for (var child : children) rank = Math.min(rank, child.rank());
       if (rank == Integer.MAX_VALUE) continue;
       var s = node.section();

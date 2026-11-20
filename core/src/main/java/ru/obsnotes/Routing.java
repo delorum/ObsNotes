@@ -143,9 +143,15 @@ public final class Routing {
       for (var item : section.items())
         if (!item.projection())
           for (var line : item.view().lines()) visible.add(item.original().start() + line.start());
-      return matchingFields(section.heading(), query).stream()
-          .filter(field -> visible.contains(field.start()))
-          .toList();
+      if (query.isBlank()) return List.of();
+      return FuzzySearch.ranked(
+          fields.stream()
+              .filter(
+                  field ->
+                      field.heading().equals(section.heading()) && visible.contains(field.start()))
+              .toList(),
+          query,
+          FieldHit::key);
     }
 
     public String tagSearchLabel(CrossReferences.Destination destination) {

@@ -61,9 +61,12 @@ class SearchLayoutTest(unittest.TestCase):
         d.tap(d.find(text='Разделы'));d.wait_for(d.keyboard_shown);u.picker_query('FixtureFact')
         labels=u.labels();self.assertEqual(1,len(labels));d.tap(d.nodes(d.tree(),text=labels[0])[0]);p.hide_ime()
 
-    def test_1_main_and_picker_find_keys_values_and_fuzzy_values_with_visible_details(self):
+    def test_1_main_finds_key_names_and_picker_also_finds_values(self):
         before=self.note()
-        for query,label in [('ClearSky','Condition:: ClearSky'),('clrsk','Condition:: ClearSky'),('Temperature','Temperature:: +17Current'),('17Current','Temperature:: +17Current')]:
+        for query in ('ClearSky','clrsk','17Current'):
+            d.query(query)
+            self.assertTrue(d.nodes(d.tree(),text='Разделы не найдены'))
+        for query,label in [('Condition','Condition:: ClearSky'),('cndtn','Condition:: ClearSky'),('Temperature','Temperature:: +17Current')]:
             d.query(query)
             self.assertIsNotNone(d.find(desc='Dataview: '+label))
             self.assertIsNotNone(d.find(text=label))
@@ -74,7 +77,7 @@ class SearchLayoutTest(unittest.TestCase):
             self.assertIn('Погода / Condition:: ClearSky',u.labels())
         u.picker_query('WeatherAlias');self.assertTrue(any('Погода' in label for label in u.labels()))
         u.dismiss_picker();p.hide_ime();self.save();self.assertEqual(before,self.note())
-        print('Current Dataview keys/values shown and searched in main and picker; fuzzy/alias search preserved; no note writes',flush=True)
+        print('Main search matches key names only; picker also searches values; fuzzy/alias search preserved; no note writes',flush=True)
 
     def test_2_task_mode_has_explicit_labels_and_both_save_semantics(self):
         self.open();self.task()

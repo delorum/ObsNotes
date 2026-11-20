@@ -27,8 +27,9 @@ public class DaySearchTreeTest {
   }
 
   @Test
-  public void valueMatchKeepsOnlyItsLineAndAncestorPath() {
-    var hits = find(DOC, "UniqueValue");
+  public void keyNameMatchKeepsOnlyItsLineAndAncestorPath() {
+    assertTrue(find(DOC, "UniqueValue").isEmpty());
+    var hits = find(DOC, "Key");
     assertEquals(1, hits.size());
     assertEquals("## Родитель", hits.get(0).heading());
     assertTrue(hits.get(0).items().isEmpty());
@@ -66,7 +67,7 @@ public class DaySearchTreeTest {
                 + "## ReallyInvolvedVeryEarlyRoadWithALongKind\n"
                 + "## Parent\n"
                 + "### Leaf\n"
-                + "Key:: RiverWalk\n");
+                + "RiverWalk:: OtherValue\n");
     var hits = find(doc, "RiverWalk");
     assertEquals("## Parent", hits.get(0).heading());
     assertEquals("## RiverWalk today", hits.get(1).heading());
@@ -145,15 +146,13 @@ public class DaySearchTreeTest {
     assertEquals("VisibleNeedle", fields.get(0).value());
     section =
         new DaySearch(DayOutline.sections(doc, doc, rules), rules).find("VisibleNeedle").get(0);
-    fields = catalog.matchingFields(section, "VisibleNeedle");
-    var items = DaySearch.withoutFields(section.items(), fields);
-    assertEquals(1, items.size());
-    assertEquals(1, items.get(0).view().lines().size());
-    assertTrue(items.get(0).view().raw().contains("VisibleNeedle task"));
-    assertFalse(items.get(0).view().raw().contains("Key::"));
+    assertTrue(catalog.matchingFields(section, "VisibleNeedle").isEmpty());
+    var item = section.items().get(0);
+    assertEquals(1, item.view().lines().size());
+    assertTrue(item.view().raw().contains("VisibleNeedle task"));
+    assertFalse(item.view().raw().contains("Key::"));
     assertEquals(
-        doc.text.indexOf("- [ ]"),
-        items.get(0).original().start() + items.get(0).view().lines().get(0).start());
+        doc.text.indexOf("- [ ]"), item.original().start() + item.view().lines().get(0).start());
   }
 
   @Test
@@ -264,7 +263,7 @@ public class DaySearchTreeTest {
             .orElseThrow();
     assertTrue(path.items().isEmpty());
     String lines = path.children().get(0).items().get(0).view().raw();
-    assertTrue(lines.contains("Field:: River"));
+    assertFalse(lines.contains("Field:: River"));
     assertTrue(lines.contains("River task"));
     assertFalse(lines.contains("ignore"));
     assertFalse(lines.contains("Ignore task"));
