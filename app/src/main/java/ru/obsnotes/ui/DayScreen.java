@@ -100,7 +100,8 @@ public final class DayScreen {
     }
     var outline = visibility.outline(DayOutline.sections(document, template, rules));
     var catalog = new Routing.Catalog(document, template);
-    EditText search = ui.searchField(ui.body, "Поиск разделов", query);
+    DaySearch index = new DaySearch(outline, catalog, rules);
+    EditText search = ui.searchField(ui.body, "Поиск разделов", query, expanded::clear);
     search.setTag("section-search");
     search.setContentDescription("Поиск разделов");
     LinearLayout results = ui.column();
@@ -136,7 +137,7 @@ public final class DayScreen {
         () -> {
           results.removeAllViews();
           headers.clear();
-          for (var section : DayOutline.search(outline, catalog, search.getText().toString()))
+          for (var section : index.find(search.getText().toString()))
             section(
                 ui,
                 results,
@@ -184,22 +185,21 @@ public final class DayScreen {
     if (headers.containsKey(heading)) return;
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
     headers.put(heading, card);
-    boolean open = expanded.contains(heading);
-    var fields = catalog.matchingFields(heading, query);
-    Set<Integer> fieldBlocks = new HashSet<>();
-    for (var field : fields) fieldBlocks.add(field.block().start());
+    boolean open = !query.isBlank() || expanded.contains(heading);
+    var fields = catalog.matchingFields(section, query);
+    var items = DaySearch.withoutFields(section.items(), fields);
     boolean[] populated = {false};
     Runnable populate =
         () -> {
           if (populated[0]) return;
           populated[0] = true;
-          if (heading.equals("## Чеклист")) ChecklistTable.add(ui, content, actions, reveal);
-          for (var item : section.items())
-            if (item.projection() || !fieldBlocks.contains(item.original().start()))
-              DayBlockView.add(ui, content, item, expanded, actions);
+          if (query.isBlank() && heading.equals("## Чеклист"))
+            ChecklistTable.add(ui, content, actions, reveal);
+          for (var item : items) DayBlockView.add(ui, content, item, expanded, actions);
           for (var child : section.children())
             section(ui, content, child, expanded, actions, headers, reveal, catalog, query);
-          if (section.items().isEmpty()
+          if (query.isBlank()
+              && section.items().isEmpty()
               && section.children().isEmpty()
               && !heading.equals("## Чеклист")) content.addView(ui.text("Пусто", 14, Ui.MUTED));
         };

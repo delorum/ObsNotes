@@ -456,7 +456,7 @@ public final class MainActivity extends AppCompatActivity {
                 cancelWeather();
                 cancelNavigation();
                 try {
-                  editor = EditorState.appendTask(path, document, template, task);
+                  editor = EditorState.editTask(path, document, template, task);
                   taskViewport = new TaskViewport(path, task.start(), ui.scroll.getScrollY());
                   recovery.save(editor, vault);
                   showEditor();
@@ -645,6 +645,10 @@ public final class MainActivity extends AppCompatActivity {
             showEditor();
           }
 
+          public void valueTarget() {
+            pickRouteReplacement(0, true);
+          }
+
           public void replaceRoute(int index) {
             pickRouteReplacement(index);
           }
@@ -748,6 +752,10 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private List<Routing.Choice> routeChoices(Routing.Catalog catalog) {
+    return routeChoices(catalog, false);
+  }
+
+  private List<Routing.Choice> routeChoices(Routing.Catalog catalog, boolean detach) {
     EditorState form = editor.activePart();
     var visibility = hiddenFor(form);
     return usage
@@ -757,7 +765,8 @@ public final class MainActivity extends AppCompatActivity {
                 .filter(c -> !visibility.hidden(c.target().heading()))
                 .filter(
                     c ->
-                        !form.editFields && form.fieldPrefix.isEmpty()
+                        detach
+                            || !form.editFields && !form.valueBound()
                             || c.target().kind() == Markdown.Kind.SECTION)
                 .filter(
                     c ->
@@ -770,12 +779,16 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void pickRouteReplacement(int index) {
+    pickRouteReplacement(index, false);
+  }
+
+  private void pickRouteReplacement(int index, boolean detach) {
     if (busy) return;
     EditorState form = editor.activePart();
     var catalog = form.routingCatalog(template);
-    var current = form.routes.get(index);
+    var current = form.routes.isEmpty() ? catalog.resolve(form.target()) : form.routes.get(index);
     var choices =
-        routeChoices(catalog).stream()
+        routeChoices(catalog, detach).stream()
             .filter(c -> c.equals(current) || !form.routes.contains(c))
             .filter(
                 c ->
@@ -784,14 +797,19 @@ public final class MainActivity extends AppCompatActivity {
             .collect(java.util.stream.Collectors.toList());
     SearchPicker.show(
         ui,
-        index == 0 ? "Основной раздел" : "Дополнительный раздел",
+        detach ? "Назначение значения" : index == 0 ? "Основной раздел" : "Дополнительный раздел",
         choices,
         catalog::pickerLabel,
         false,
         List.of(current),
-        selected -> validatePartRoutes(form, form.replacingRoute(index, selected.get(0))),
+        selected -> {
+          EditorState candidate = form.copy();
+          if (detach) candidate.removeValueTarget();
+          return validatePartRoutes(candidate, candidate.replacingRoute(index, selected.get(0)));
+        },
         catalog::searchLabel,
         selected -> {
+          if (detach) form.removeValueTarget();
           form.replaceRoute(index, selected.get(0), catalog);
           recovery.save(editor, vault);
           showEditor();
@@ -1064,10 +1082,9 @@ public final class MainActivity extends AppCompatActivity {
     if (editor.parts != null) editor.parts.sync();
     EditorState form = editor;
     int returnY =
-        form.taskAppend
-                && taskViewport != null
+        taskViewport != null
                 && taskViewport.path().equals(form.destinationPath)
-                && taskViewport.line() == form.targetLine
+                && (taskViewport.line() == form.targetLine || taskViewport.line() == form.start)
             ? taskViewport.y()
             : -1;
     if (EditorRevision.unchanged(form, template)) {

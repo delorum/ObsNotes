@@ -135,8 +135,8 @@ public final class EditorParts {
             form.secretOpen = true;
           }
           form.partId = UUID.randomUUID().toString();
-          if (!form.fieldPrefix.isEmpty() || form.kind != Markdown.Kind.SECTION) {
-            form.fieldPrefix = "";
+          if (form.valueBound() || form.kind != Markdown.Kind.SECTION) {
+            form.fieldPrefix = form.taskShell = "";
             form.editFields = false;
             form.taskAppend = false;
             form.fresh = true;
@@ -157,7 +157,7 @@ public final class EditorParts {
         for (Part old : contributors) {
           EditorState source = old.form();
           if (old != origin) {
-            if (!source.fieldPrefix.isEmpty())
+            if (source.valueBound())
               throw new IllegalArgumentException("Поля имеют разные ключи. Верните пустую строку.");
             if (!Events.id(source.text).isEmpty() || !source.rootLinkLabel().isEmpty())
               throw new IllegalArgumentException(
@@ -233,7 +233,7 @@ public final class EditorParts {
   }
 
   private static boolean pinned(EditorState form) {
-    return !form.fieldPrefix.isEmpty() || form.taskAppend;
+    return form.valueBound() || form.taskAppend;
   }
 
   /** Metadata actions may insert a person's visible name; keep the shared field in sync. */

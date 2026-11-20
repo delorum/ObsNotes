@@ -32,6 +32,10 @@ public final class EditorRevision {
       add(key, form.destinationPath);
       add(key, form.kind);
       add(key, form.fieldPrefix);
+      if (!form.taskShell.isEmpty()) {
+        add(key, "taskValue");
+        add(key, form.taskShell);
+      }
       add(key, form.heading);
       if (form.kind != Markdown.Kind.SECTION) {
         add(key, form.targetLine);

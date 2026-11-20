@@ -238,6 +238,10 @@ public final class Ui {
   }
 
   public EditText searchField(LinearLayout parent, String label, String value) {
+    return searchField(parent, label, value, () -> {});
+  }
+
+  public EditText searchField(LinearLayout parent, String label, String value, Runnable cleared) {
     LinearLayout row = row(), input = column();
     EditText search = field(input, label, value, false, null);
     ((LinearLayout.LayoutParams) input.getChildAt(0).getLayoutParams()).bottomMargin = 0;
@@ -247,6 +251,7 @@ public final class Ui {
         ru.obsnotes.R.drawable.ic_clear,
         "Очистить поиск",
         () -> {
+          cleared.run();
           search.setText("");
           focusInput(search);
         });

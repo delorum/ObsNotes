@@ -9,6 +9,7 @@ import shlex
 import unittest
 import xml.etree.ElementTree as ET
 from PIL import Image
+from pathlib import Path
 import device_day_navigation as d
 import device_editor_parts as p
 import device_editor_exit as e
@@ -45,7 +46,13 @@ def enter(value):
             d.adb('shell', 'input', 'keyevent', '66')
         if line:
             d.adb('shell', 'input', 'text', line.replace(' ', '%s'))
-    d.wait_for(lambda: p.state()['value'] == value)
+    def entered():
+        try:
+            return d.pending_editor().get('parts', {}).get('value') == value
+        except (ET.ParseError, KeyError):
+            # SharedPreferences may be between writing and renaming its snapshot.
+            return False
+    d.wait_for(entered)
     p.hide_ime()
 
 
@@ -143,7 +150,7 @@ class ValuePartsTest(unittest.TestCase):
         p.hide_ime()
         self.assertEqual('one\ntwo\n\nSecond\n\nThird', p.state()['value'])
         self.assertEqual('Metric:: ', p.state()['items'][0]['fieldPrefix'])
-        self.assertIsNotNone(d.find(desc='Dataview-ключ Metric', down=False))
+        self.assertIsNotNone(d.find(desc='Dataview-ключ Metric::', down=False))
         self.save()
         text = self.note()
         self.assertIn('Metric:: one; two ^event-', text)
@@ -155,12 +162,11 @@ class ValuePartsTest(unittest.TestCase):
 
     def test_2_multiline_task_addition_and_independent_part(self):
         d.query('Routine')
-        d.tap(d.find(desc='Развернуть раздел Факты'))
-        d.tap(d.find(desc='Добавить текст к задаче: Routine'))
+        d.tap(d.find(desc='Редактировать задачу: Routine'))
         d.wait_for(d.keyboard_shown)
         enter('one\ntwo\n\nTaskSide')
-        self.assertTrue(p.state()['items'][0]['taskAppend'])
-        self.assertFalse(p.state()['items'][1]['taskAppend'])
+        self.assertTrue(p.state()['items'][0]['taskShell'])
+        self.assertFalse(p.state()['items'][1]['taskShell'])
         choose_part(2, 'WorkAlias')
         self.assertEqual(SOURCE, self.note())
         self.save()
@@ -244,7 +250,7 @@ class ValuePartsTest(unittest.TestCase):
         d.wait_for(d.keyboard_shown)
         self.assertEqual('old\n\nkeep', e.input_field().get('text'))
         p.hide_ime()
-        self.assertIsNotNone(d.find(desc='Dataview-ключ Other', down=False))
+        self.assertIsNotNone(d.find(desc='Dataview-ключ Other::', down=False))
         self.save()
         self.assertEqual(original, self.note())
         self.assertEqual(stamp, d.adb('shell', 'stat', '-c', '%y', d.PHONE + '/' + self.relative))
@@ -420,14 +426,147 @@ class ValuePartsTest(unittest.TestCase):
         self.assertEqual(SOURCE, self.note())
         print('Phone: missing-file race retains current note and reopened calendar reloads changed status', flush=True)
 
+    def test_9_value_badges_detach_retarget_and_task_value_recovery(self):
+        d.query('Metric')
+        d.tap(d.find(desc='Dataview: Metric:: old'))
+        d.wait_for(d.keyboard_shown)
+        p.hide_ime()
+        self.assertIsNotNone(d.find(text='Metric::', down=False))
+        d.tap(d.find(desc='Удалить назначение: Metric::', down=False))
+        d.wait_for(lambda: not p.state()['items'][0]['fieldPrefix'])
+        self.assertEqual('old', p.state()['value'])
+        self.assertEqual(SOURCE, self.note())
+        self.save()
+        self.assertNotIn('Metric:: old', self.note())
+        self.assertIn('old', self.note().split('## Поля')[1].split('## Факты')[0])
+        print('Phone: Dataview :: badge and trash detach value into its section passed', flush=True)
+
+        d.query('Routine')
+        d.tap(d.find(desc='Редактировать задачу: Routine'))
+        d.wait_for(d.keyboard_shown)
+        self.assertEqual('', d.pending_editor()['text'])
+        enter('first\nsecond')
+        self.assertIsNotNone(d.find(text='Задача: Routine', down=False))
+        Path('/tmp/obsnotes-values-device.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        self.save()
+        self.assertIn('Routine; first; second ✅ ' + self.today.isoformat(), self.note())
+        d.query('Routine')
+        d.tap(d.find(desc='Редактировать задачу: Routine; first; second', down=False))
+        d.wait_for(d.keyboard_shown)
+        self.assertEqual('first; second', e.input_field().get('text'))
+        enter('replacement')
+        d.adb('shell', 'am', 'force-stop', 'ru.obsnotes')
+        d.adb('shell', 'am', 'start', '-n', 'ru.obsnotes/.MainActivity')
+        d.wait_for(lambda: bool(d.nodes(d.tree(), desc='Сохранить')))
+        p.hide_ime()
+        self.assertEqual('replacement', p.state()['value'])
+        self.assertTrue(p.state()['items'][0]['taskShell'])
+        self.save()
+        self.assertIn('Routine; replacement ✅ ', self.note())
+        self.assertNotIn('first; second', self.note())
+        d.query('Routine')
+        d.tap(d.find(desc='Редактировать задачу: Routine; replacement', down=False))
+        d.wait_for(d.keyboard_shown)
+        enter('')
+        self.save()
+        self.assertIn('Routine ✅ ', self.note())
+        self.assertNotIn('replacement', self.note())
+        print('Phone: task existing value edit/delete, multiline collapse and recovery passed', flush=True)
+
+        d.query('Routine')
+        d.tap(d.find(desc='Редактировать задачу: Routine', down=False))
+        d.wait_for(d.keyboard_shown)
+        enter('plain')
+        d.tap(d.find(desc='Удалить назначение: Задача: Routine', down=False))
+        d.wait_for(lambda: not p.state()['items'][0]['taskShell'])
+        self.save()
+        self.assertNotIn('#task/diary/fact Routine', self.note())
+        self.assertIn('plain', self.note().split('## Факты')[1].split('## Работа')[0])
+        print('Phone: task trash detaches value into its physical section passed', flush=True)
+
+    def test_10_search_prunes_nested_fields_tasks_and_clear_collapses_everything(self):
+        original = SOURCE + ('\n## SearchParent\nParentKey:: ParentOnly\n'
+            '### SearchChild\nHitKey:: ExactNeedle\nOtherKey:: UnrelatedValue\n'
+            '- [x] #task/diary/fact TargetTask; RiverWalk ✅ ' + self.today.isoformat() + '\n'
+            '- [ ] #task/diary/fact SiblingTask\n'
+            '### OtherChild\nSiblingKey:: IgnoreMe\n')
+        e.put(self.relative, original)
+        d.tap(d.find(desc='Обновить', down=False))
+        d.query('ExactNeedle')
+        tree = d.tree()
+        self.assertTrue(d.nodes(tree, desc='Развернуть раздел SearchParent'))
+        self.assertTrue(d.nodes(tree, desc='Развернуть раздел SearchChild'))
+        self.assertTrue(d.nodes(tree, desc='Dataview: HitKey:: ExactNeedle'))
+        for text in ('ParentKey:: ParentOnly', 'OtherKey:: UnrelatedValue', 'SiblingTask', 'SiblingKey:: IgnoreMe'):
+            self.assertFalse(d.nodes(tree, text=text), text)
+        d.query('rvrwlk')
+        tree = d.tree()
+        self.assertTrue(d.nodes(tree, desc='Редактировать задачу: TargetTask; RiverWalk'))
+        self.assertFalse(d.nodes(tree, desc='Редактировать задачу: SiblingTask'))
+        self.assertFalse(d.nodes(tree, desc='Dataview: HitKey:: ExactNeedle'))
+        Path('/tmp/obsnotes-search-device.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        d.tap(d.find(desc='Снять отметку: TargetTask; RiverWalk'))
+        d.wait_for(lambda: '- [ ] #task/diary/fact TargetTask; RiverWalk' in self.note())
+        self.assertTrue(d.nodes(d.tree(), desc='Редактировать задачу: TargetTask; RiverWalk'))
+        print('Phone: nested matching field/task is visible immediately, siblings absent, toggle retains filter', flush=True)
+        d.find(desc='Поиск разделов', down=False)
+        d.tap(d.find(desc='Очистить поиск', down=False))
+        p.hide_ime()
+        tree=d.tree()
+        self.assertIn(d.nodes(tree,desc='Поиск разделов')[0].get('text'), ('', 'Поиск разделов'))
+        self.assertFalse(d.nodes(tree,desc='Редактировать задачу: TargetTask; RiverWalk'))
+        self.assertFalse(d.nodes(tree,desc='Развернуть раздел SearchChild'))
+        self.assertFalse(d.nodes(tree,desc='Развернуть текстовый блок'))
+        print('Phone: clear query restores full collapsed outline passed', flush=True)
+
+    def test_11_value_badges_can_choose_other_destination_without_losing_text(self):
+        d.query('Metric')
+        d.tap(d.find(desc='Dataview: Metric:: old'))
+        d.wait_for(d.keyboard_shown)
+        p.hide_ime()
+        d.tap(d.find(text='Metric::', down=False))
+        d.wait_for(d.keyboard_shown)
+        u.picker_query('Routine')
+        labels=u.labels()
+        self.assertEqual(1,len(labels),labels)
+        d.tap(d.nodes(d.tree(),text=labels[0])[0])
+        p.hide_ime()
+        self.assertEqual('',p.state()['items'][0]['fieldPrefix'])
+        self.assertEqual('TASK',p.state()['items'][0]['kind'])
+        self.assertEqual('old',p.state()['value'])
+        self.assertIsNotNone(d.find(text='Задача: Routine',down=False))
+        self.assertEqual(SOURCE,self.note())
+        self.save()
+        self.assertIn('Routine; old ✅ ',self.note())
+        self.assertNotIn('Metric:: old',self.note())
+        d.query('Routine')
+        d.tap(d.find(desc='Редактировать задачу: Routine; old'))
+        d.wait_for(d.keyboard_shown)
+        p.hide_ime()
+        d.tap(d.find(text='Задача: Routine',down=False))
+        d.wait_for(d.keyboard_shown)
+        u.picker_query('WorkAlias')
+        labels=u.labels()
+        self.assertEqual(1,len(labels),labels)
+        d.tap(d.nodes(d.tree(),text=labels[0])[0])
+        p.hide_ime()
+        self.assertEqual('SECTION',p.state()['items'][0]['kind'])
+        self.assertEqual('',p.state()['items'][0]['taskShell'])
+        self.assertEqual('## Работа',p.state()['items'][0]['heading'])
+        self.assertEqual('old',p.state()['value'])
+        self.save()
+        self.assertNotIn('Routine',self.note())
+        self.assertIn('old',self.note().split('## Работа')[1].split('## Дом')[0])
+        print('Phone: tap value badges retargets field to task and task value to ordinary section passed',flush=True)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--serial', required=True)
     parser.add_argument('--apk')
-    parser.add_argument('--case')
+    parser.add_argument('--case', action='append')
     args = parser.parse_args()
     d.ADB = ['/home/aborunov/Android/Sdk/platform-tools/adb', '-s', args.serial]
     d.APK = args.apk
-    tests = ['ValuePartsTest.' + args.case] if args.case else []
+    tests = ['ValuePartsTest.' + case for case in args.case] if args.case else []
     unittest.main(argv=['device_value_parts'] + tests, verbosity=2)

@@ -24,6 +24,8 @@ public final class EditorScreen {
 
     void replaceRoute(int index);
 
+    void valueTarget();
+
     void replaceTag(int index);
 
     void destination();
@@ -256,7 +258,15 @@ public final class EditorScreen {
     for (int i = 0; i < state.routes.size(); i++) {
       int index = i;
       var route = state.routes.get(i);
-      Chip chip = chip(ui, route.label(), i == 0 ? Ui.INK : Ui.ACCENT);
+      Chip chip =
+          chip(
+              ui,
+              route.target().kind() == Markdown.Kind.FIELD
+                  ? route.label() + "::"
+                  : route.target().kind() == Markdown.Kind.TASK
+                      ? "Задача: " + route.label()
+                      : route.label(),
+              i == 0 ? Ui.INK : Ui.ACCENT);
       chip.setCloseIconContentDescription("Удалить раздел: " + route.label());
       chip.setOnClickListener(
           v -> {

@@ -25,7 +25,8 @@ public final class Routing {
 
   public record Token(String text, Choice choice) {}
 
-  public record FieldHit(String heading, String key, String value, Markdown.Block block) {
+  public record FieldHit(
+      String heading, String key, String value, Markdown.Block block, int start) {
     public String label() {
       return key + "::" + (value.isEmpty() ? "" : " " + value);
     }
@@ -87,7 +88,7 @@ public final class Routing {
                 .orElse(null);
         if (section == null || block == null) continue;
         String value = CrossReferences.clean(field.value());
-        fields.add(new FieldHit(section.heading(), field.key(), value, block));
+        fields.add(new FieldHit(section.heading(), field.key(), value, block, field.start()));
         termsBySection
             .computeIfAbsent(section.heading(), ignored -> new LinkedHashSet<>())
             .add(value);
@@ -113,6 +114,17 @@ public final class Routing {
     /**
      * Search names, aliases, field keys/current values and diary tasks, without ordinary note text.
      */
+    public String sectionIdentityLabel(String heading) {
+      return choices.stream()
+          .filter(
+              c ->
+                  c.target().kind() == Markdown.Kind.SECTION
+                      && c.target().heading().equals(heading))
+          .findFirst()
+          .map(this::searchLabel)
+          .orElse(heading);
+    }
+
     public String sectionSearchLabel(String heading) {
       return sectionLabels.getOrDefault(heading, heading);
     }
@@ -134,6 +146,17 @@ public final class Routing {
           fields.stream().filter(field -> field.heading().equals(heading)).toList(),
           query,
           FieldHit::searchLabel);
+    }
+
+    /** Only actual visible matching lines qualify, including duplicate keys in a shared block. */
+    public List<FieldHit> matchingFields(DayOutline.Section section, String query) {
+      Set<Integer> visible = new HashSet<>();
+      for (var item : section.items())
+        if (!item.projection())
+          for (var line : item.view().lines()) visible.add(item.original().start() + line.start());
+      return matchingFields(section.heading(), query).stream()
+          .filter(field -> visible.contains(field.start()))
+          .toList();
     }
 
     public String tagSearchLabel(CrossReferences.Destination destination) {

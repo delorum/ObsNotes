@@ -18,7 +18,7 @@ public final class EditorState {
   public boolean fresh = true;
   public boolean appendTaskText = true;
   public boolean editFields = false, routesInitialized = false, routeChosen = false;
-  public String fieldPrefix = "";
+  public String fieldPrefix = "", taskShell = "";
   public boolean weatherForm = false;
   public boolean taskAppend = false;
   public String fallbackHeading = "";
@@ -114,6 +114,7 @@ public final class EditorState {
     s.appendTaskText = appendTaskText;
     s.editFields = editFields;
     s.fieldPrefix = fieldPrefix;
+    s.taskShell = taskShell;
     s.routesInitialized = routesInitialized;
     s.routeChosen = routeChosen;
     s.weatherForm = weatherForm;
@@ -162,6 +163,9 @@ public final class EditorState {
       String path, Markdown source, Markdown template, Markdown.Block block) {
     if (!source.blocks.contains(block))
       throw new IllegalArgumentException("Текстовый блок изменился");
+    if (!block.text().contains("\n") && DiaryTasks.isDiary(block.text()))
+      return editTask(
+          path, source, template, new DiaryTasks.Task(block.start(), block.text(), false));
     EditorState state = at(path, source, block.section().heading());
     state.fresh = false;
     state.original = state.text = block.text();
@@ -198,6 +202,59 @@ public final class EditorState {
     return state;
   }
 
+  /** Edit the stored task value, rather than appending an opaque second value. */
+  public static EditorState editTask(
+      String path, Markdown source, Markdown template, DiaryTasks.Task selected) {
+    var task =
+        DiaryTasks.in(source.text, 0).stream()
+            .filter(t -> t.start() == selected.start() && t.source().equals(selected.source()))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Задача изменилась"));
+    var section =
+        source.sections.stream()
+            .filter(s -> task.start() >= s.body() && task.start() < s.end())
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Раздел задачи не найден"));
+    EditorState state = at(path, source, section.heading());
+    state.fresh = false;
+    var container =
+        source.blocks.stream()
+            .filter(block -> task.start() >= block.start() && task.start() < block.end())
+            .findFirst()
+            .orElseThrow();
+    boolean whole =
+        CrossReferences.clean(container.text()).equals(CrossReferences.clean(task.source()));
+    state.start = whole ? container.start() : task.start();
+    state.end = whole ? container.end() : task.start() + task.source().length();
+    state.original = state.text = whole ? container.text() : task.source();
+    Parts metadata = state.parts();
+    var value = TaskValue.parse(metadata.body.stripTrailing());
+    state.taskShell = value.shell();
+    state.text = metadata.join(value.value());
+    state.routeChosen = true;
+    state.initializeRoutes(template);
+    state.cursor = state.editableText().length();
+    EditorRevision.remember(state, template);
+    return state;
+  }
+
+  public boolean valueBound() {
+    return !fieldPrefix.isEmpty() || !taskShell.isEmpty();
+  }
+
+  public String valueLabel() {
+    return !fieldPrefix.isEmpty()
+        ? protectedFieldName() + "::"
+        : taskShell.isEmpty() ? "" : "Задача: " + new TaskValue(taskShell, "").label();
+  }
+
+  public void removeValueTarget() {
+    String anchor = Events.id(taskShell);
+    if (!anchor.isEmpty() && Events.id(text).isEmpty()) text = text.stripTrailing() + " ^" + anchor;
+    fieldPrefix = taskShell = "";
+    editFields = false;
+  }
+
   /** Cursor offsets refer to visible values, never field keys or hidden Markdown metadata. */
   public InputCaret inputCaret() {
     int at = Math.max(0, cursor);
@@ -216,9 +273,9 @@ public final class EditorState {
   }
 
   public boolean emptyNote() {
-    if (!fieldPrefix.isEmpty()) return false;
+    if (valueBound()) return false;
     if (parts != null)
-      return parts.parts.stream().noneMatch(p -> !p.form().fieldPrefix.isEmpty())
+      return parts.parts.stream().noneMatch(p -> p.form().valueBound())
           && parts.value.isBlank()
           && !(!fresh
               && Events.prefix(sourcePath, original).body().isBlank()
@@ -347,11 +404,7 @@ public final class EditorState {
   }
 
   public void toggleSecret(char[] password, Markdown template) {
-    if (kind != Markdown.Kind.SECTION
-        || editFields
-        || !fieldPrefix.isEmpty()
-        || taskAppend
-        || weatherForm)
+    if (kind != Markdown.Kind.SECTION || editFields || valueBound() || taskAppend || weatherForm)
       throw new IllegalArgumentException("Шифрование доступно для текстовых блоков в разделах");
     Parts p = parts();
     String body = editableBody(p);
@@ -390,10 +443,20 @@ public final class EditorState {
   }
 
   public int fieldCount() {
+    if (parts != null)
+      return (int) parts.parts.stream().filter(p -> !p.form().fieldPrefix.isEmpty()).count();
     return editFields ? FieldBlock.parse(parts().body).fields().size() : 0;
   }
 
   public String fieldName(int index) {
+    if (parts != null)
+      return parts.parts.stream()
+          .map(EditorParts.Part::form)
+          .filter(f -> !f.fieldPrefix.isEmpty())
+          .skip(index)
+          .findFirst()
+          .orElseThrow()
+          .protectedFieldName();
     return FieldBlock.parse(parts().body).fields().get(index).key();
   }
 
@@ -568,13 +631,20 @@ public final class EditorState {
   public String savedText() {
     Parts parts = parts();
     TaggedText tags = TaggedText.parse(secretOpen ? SecretText.openBody(parts.body) : parts.body);
-    if (tags.clean.isBlank() && fieldPrefix.isEmpty()) {
+    if (tags.clean.isBlank() && !valueBound()) {
       if (parentOnly()) return parts.link.stripTrailing();
       throw new IllegalArgumentException("Введите текст");
     }
     String body = tags.render().stripTrailing();
     if (kind != Markdown.Kind.SECTION || !fieldPrefix.isEmpty())
       body = InlineFields.singleLine(body);
+    if (!taskShell.isEmpty())
+      return parts.join(
+          new TaskValue(taskShell, "")
+              .render(
+                  body,
+                  java.time.LocalDate.parse(
+                      DiaryLayout.fileName(destinationPath).substring(0, 10))));
     return parts.join(fieldPrefix + body);
   }
 
@@ -585,8 +655,7 @@ public final class EditorState {
   public void initializeRoutes(Markdown template) {
     if (routesInitialized) return;
     if (fallbackHeading.isEmpty()) fallbackHeading = heading;
-    if (!fresh && fieldPrefix.isEmpty() && FieldBlock.parse(parts().body).present())
-      editFields = true;
+    if (!fresh && !valueBound() && FieldBlock.parse(parts().body).present()) editFields = true;
     var catalog = routingCatalog(template);
     List<Routing.Choice> choices = new ArrayList<>();
     choices.add(catalog.resolve(target()));
@@ -621,7 +690,7 @@ public final class EditorState {
   public void applyRoutes(List<Routing.Choice> choices, Routing.Catalog catalog) {
     String error = validateRoutes(choices);
     if (error != null) throw new IllegalArgumentException(error);
-    if ((editFields || !fieldPrefix.isEmpty())
+    if ((editFields || valueBound())
         && !choices.isEmpty()
         && choices.get(0).target().kind() != Markdown.Kind.SECTION)
       throw new IllegalArgumentException("Для поля изменяйте значение или раздел");
@@ -658,7 +727,7 @@ public final class EditorState {
   public String validateRoutes(List<Routing.Choice> choices) {
     String error = Routing.validate(choices);
     if (error != null) return error;
-    if (!fieldPrefix.isEmpty()
+    if (valueBound()
         && !choices.isEmpty()
         && choices.get(0).target().kind() != Markdown.Kind.SECTION)
       return "Для поля изменяйте значение или раздел";
@@ -673,7 +742,8 @@ public final class EditorState {
 
   public List<Routing.Choice> replacingRoute(int index, Routing.Choice choice) {
     List<Routing.Choice> next = new ArrayList<>(routes);
-    next.set(index, choice);
+    if (index == 0 && next.isEmpty()) next.add(choice);
+    else next.set(index, choice);
     return List.copyOf(next);
   }
 
@@ -726,6 +796,7 @@ public final class EditorState {
         FieldBlock.labels(
             TaggedText.parse(secretOpen ? SecretText.openBody(p.body) : p.body).clean);
     if (!fieldPrefix.isEmpty()) return protectedFieldName() + ": " + value;
+    if (!taskShell.isEmpty()) return new TaskValue(taskShell, "").label() + ": " + value;
     if (kind == Markdown.Kind.FIELD && !editFields) {
       var field = Markdown.FIELD.matcher(targetSource);
       if (field.matches()) return field.group(1) + ": " + value;
@@ -765,6 +836,20 @@ public final class EditorState {
   }
 
   public Markdown.Block originalBlock(Markdown document) {
+    if (DiaryTasks.isDiary(original) && start >= 0 && end == start + original.length()) {
+      var task =
+          DiaryTasks.in(document.text, 0).stream()
+              .filter(t -> t.start() == start && t.source().equals(original))
+              .findFirst();
+      if (task.isPresent()) {
+        var section =
+            document.sections.stream()
+                .filter(row -> start >= row.body() && start < row.end())
+                .findFirst()
+                .orElseThrow();
+        return new Markdown.Block(start, end, section, original);
+      }
+    }
     return document.blocks.stream()
         .filter(b -> b.start() == start && b.end() == end && b.text().equals(original))
         .findFirst()

@@ -17,19 +17,27 @@ final class EditorPartsScreen {
       Markdown template,
       String weatherCity,
       EditorScreen.Actions actions) {
+    EditorState first = owner.parts.parts.get(0).form();
+    boolean values = owner.parts.parts.stream().anyMatch(part -> part.form().valueBound());
     ui.page(
-        owner.taskAppend
-            ? "Дополнение к задаче"
-            : owner.fieldCount() == 1
-                ? owner.fieldName(0)
-                : owner.fieldCount() > 1
-                    ? "Поля"
-                    : owner.fresh ? "Новая заметка" : "Текстовый блок",
+        !first.taskShell.isEmpty()
+            ? new TaskValue(first.taskShell, "").label()
+            : owner.taskAppend
+                ? "Дополнение к задаче"
+                : owner.fieldCount() == 1
+                    ? owner.fieldName(0)
+                    : owner.fieldCount() > 1
+                        ? "Поля"
+                        : owner.fresh ? "Новая заметка" : "Текстовый блок",
         actions::back);
     ui.action(ui.bar, ru.obsnotes.R.drawable.ic_save, "Сохранить", actions::save);
     EditText input =
         ui.field(
-            ui.body, owner.taskAppend ? "Дополнение" : "Текст", owner.editableText(), true, null);
+            ui.body,
+            owner.taskAppend ? "Дополнение" : values ? "Значение" : "Текст",
+            owner.editableText(),
+            true,
+            null);
     SecretInput.protect(input);
     var lock =
         ui.icon(
@@ -96,11 +104,17 @@ final class EditorPartsScreen {
             chips.setChipSpacingVertical(0);
             card.addView(chips);
             EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of(), colorOffset, false);
-            if (!form.fieldPrefix.isEmpty()) {
-              Chip key = EditorScreen.chip(ui, form.protectedFieldName(), Ui.INK);
-              key.setCloseIconVisible(false);
-              key.setContentDescription("Dataview-ключ " + form.protectedFieldName());
-              key.setClickable(false);
+            if (form.valueBound()) {
+              Chip key = EditorScreen.chip(ui, form.valueLabel(), Ui.INK);
+              key.setContentDescription(
+                  (form.taskShell.isEmpty() ? "Dataview-ключ " : "Задача ") + form.valueLabel());
+              key.setOnClickListener(v -> scoped.valueTarget());
+              key.setCloseIconContentDescription("Удалить назначение: " + form.valueLabel());
+              key.setOnCloseIconClickListener(
+                  v -> {
+                    form.removeValueTarget();
+                    scoped.routesChanged();
+                  });
               chips.addView(key, 0);
             }
             colorOffset += LineMarks.of(form.editableText(), form.tags()).size();
@@ -309,6 +323,11 @@ final class EditorPartsScreen {
     public void replaceRoute(int i) {
       select.run();
       parent.replaceRoute(i);
+    }
+
+    public void valueTarget() {
+      select.run();
+      parent.valueTarget();
     }
 
     public void replaceTag(int i) {
