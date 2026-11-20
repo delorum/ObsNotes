@@ -369,6 +369,8 @@ public final class EditorParts {
 
   public void addInternal(int child, int parent, String replacing) {
     EditorState a = parts.get(child).form(), b = parts.get(parent).form();
+    if (WorkDaily.selected(a) || WorkDaily.selected(b))
+      throw new IllegalArgumentException("Рабочие записи не поддерживают связи частей");
     if (a.kind != Markdown.Kind.SECTION || b.kind != Markdown.Kind.SECTION)
       throw new IllegalArgumentException(
           "Связи доступны для разделов, без задач и Dataview-ключей");
@@ -526,6 +528,10 @@ public final class EditorParts {
   }
 
   public String validateRoutes(EditorState form, List<Routing.Choice> choices) {
+    if (WorkDaily.selected(choices)
+        && effectiveLinks().involved(form.partId)
+        && !WorkDaily.selected(form))
+      return "Сначала уберите связи этой части перед переносом в работу";
     if (effectiveLinks().involved(form.partId)
         && !choices.isEmpty()
         && choices.get(0).target().kind() != Markdown.Kind.SECTION)
@@ -600,28 +606,30 @@ public final class EditorParts {
       LocalDateTime now,
       CleanupRules rules) {
     validate();
-    List<EditorState> forms = savedForms();
+    List<EditorState> forms = savedForms().stream().map(WorkDaily::physical).toList();
     boolean internalEvents = !effectiveLinks().rootIds().isEmpty();
     // A single part retains the existing in-place edit and protected-anchor semantics.
     if (parts.size() == 1 && !(internalEvents && !owner.sourcePath.equals(owner.destinationPath))) {
       EditorState form = forms.get(0);
       form.edit(value);
       return VaultRepository.addRoots(
-          VaultRepository.plan(form, source, destination, template, date, now, rules),
+          VaultRepository.plan(
+              form, source, new Markdown(form.destinationSnapshot), template, date, now, rules),
           pendingRootEdits());
     }
     if (!owner.fresh) owner.originalBlock(source);
     LinkedHashMap<String, String> before = new LinkedHashMap<>(), after = new LinkedHashMap<>();
     before.put(owner.destinationPath, destination.text);
     before.put(owner.sourcePath, source.text);
+    for (var form : forms) before.putIfAbsent(form.destinationPath, form.destinationSnapshot);
     after.putAll(before);
 
     if (!owner.fresh
-        && owner.sourcePath.equals(owner.destinationPath)
         && forms.stream()
             .allMatch(
                 f ->
                     f.kind == Markdown.Kind.SECTION
+                        && f.destinationPath.equals(owner.sourcePath)
                         && f.heading.equals(owner.originalBlock(source).section().heading()))) {
       StringBuilder output = new StringBuilder();
       for (int i = 0; i < forms.size(); i++) {
@@ -702,7 +710,9 @@ public final class EditorParts {
       firstPart = false;
     }
     List<VaultRepository.Change> result = new ArrayList<>();
-    for (String path : before.keySet()) {
+    List<String> writeOrder = new ArrayList<>(before.keySet());
+    if (writeOrder.remove(owner.sourcePath)) writeOrder.add(owner.sourcePath);
+    for (String path : writeOrder) {
       String updated = after.get(path);
       result.add(new VaultRepository.Change(path, before.get(path), updated));
     }

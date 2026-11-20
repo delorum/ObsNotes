@@ -18,9 +18,7 @@ public final class DailyChecklist {
       long modified, Long operations, boolean workOk, String workError, String financeError) {}
 
   public static String workPath(LocalDate date) {
-    return DiaryLayout.path(date)
-        .replace("Дневник/Хроника/", "Работа/Daily/Хроника/")
-        .replaceFirst("\\.md$", "-work.md");
+    return WorkDaily.path(date);
   }
 
   private static Long timestamp(String raw) {

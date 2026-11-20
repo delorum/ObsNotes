@@ -51,6 +51,10 @@ public final class Routing {
     private final Map<String, String> sectionLabels = new LinkedHashMap<>();
 
     public Catalog(Markdown destination, Markdown template) {
+      this(destination, template, false);
+    }
+
+    public Catalog(Markdown destination, Markdown template, boolean workAvailable) {
       Map<String, String> byHeading = new LinkedHashMap<>();
       for (var d : CrossReferences.destinations(template))
         aliases.computeIfAbsent(d.heading(), ignored -> new ArrayList<>()).add(d.id());
@@ -64,6 +68,7 @@ public final class Routing {
         rows.add(choice);
         if (!id.isEmpty()) canonical.putIfAbsent(id.toLowerCase(Locale.ROOT), choice);
       }
+      if (workAvailable) rows.add(WorkDaily.choice());
       choices = List.copyOf(rows);
       Map<String, Set<String>> termsBySection = new LinkedHashMap<>();
       for (var doc : List.of(template, destination)) {

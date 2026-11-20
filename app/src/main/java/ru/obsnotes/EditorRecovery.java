@@ -86,6 +86,7 @@ public final class EditorRecovery {
     j.put("appendTaskText", s.appendTaskText);
     j.put("editFields", s.editFields);
     j.put("fieldPrefix", s.fieldPrefix);
+    j.put("workSnapshot", s.workSnapshot == null ? JSONObject.NULL : s.workSnapshot);
     j.put("taskShell", s.taskShell);
     j.put("weatherForm", s.weatherForm);
     j.put("taskAppend", s.taskAppend);
@@ -194,6 +195,8 @@ public final class EditorRecovery {
     s.appendTaskText = j.optBoolean("appendTaskText", true);
     s.editFields = j.optBoolean("editFields");
     s.fieldPrefix = j.optString("fieldPrefix");
+    s.workSnapshot =
+        j.has("workSnapshot") && !j.isNull("workSnapshot") ? j.getString("workSnapshot") : null;
     s.taskShell = j.optString("taskShell");
     s.weatherForm = j.optBoolean("weatherForm");
     s.taskAppend = j.optBoolean("taskAppend");

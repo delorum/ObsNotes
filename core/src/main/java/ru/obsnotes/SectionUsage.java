@@ -94,13 +94,20 @@ public final class SectionUsage {
     Markdown.Block original =
         state.fresh ? null : state.originalBlock(new Markdown(state.sourceSnapshot));
     List<Use> uses = new ArrayList<>();
+    boolean sameWorkSection =
+        WorkDaily.selected(state)
+            && state.sourcePath.equals(WorkDaily.path(WorkDaily.date(state.destinationPath)))
+            && original != null
+            && original.section().heading().equals(WorkDaily.EVENTS);
     boolean moved =
-        original != null
+        !sameWorkSection
+            && original != null
             && (!state.sourcePath.equals(state.destinationPath)
                 || state.kind != Markdown.Kind.SECTION
                 || !original.section().heading().equals(state.heading));
     if (moved || state.fresh && (state.routeChosen || !state.heading.equals("## Заметки")))
       uses.add(new Use(state.heading, Role.PRIMARY));
+    if (WorkDaily.selected(state)) return List.copyOf(uses);
     Set<String> before =
         original == null
             ? Set.of()

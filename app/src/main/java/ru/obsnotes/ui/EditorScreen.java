@@ -281,6 +281,11 @@ public final class EditorScreen {
           });
       group.addView(chip);
     }
+    if (WorkDaily.selected(state)) {
+      group.setVisibility(
+          group.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
+      return;
+    }
     List<TaggedText.Tag> tags = state.tags();
     String clean = state.editableText();
     List<Integer> order = new ArrayList<>();

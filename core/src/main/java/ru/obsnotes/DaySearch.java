@@ -40,6 +40,7 @@ public final class DaySearch {
   private static Node index(DayOutline.Section section, DayContentRules rules) {
     List<Entry> entries = new ArrayList<>();
     for (var item : section.items()) {
+      if (!item.path().isEmpty()) continue;
       for (var line : item.view().lines()) {
         if (line.literal()) continue;
         var field = Markdown.FIELD.matcher(CrossReferences.clean(line.text()));
@@ -126,7 +127,7 @@ public final class DaySearch {
         String raw = String.join("\n", visible.stream().map(MarkdownLines.Line::text).toList());
         var view =
             new DayContentRules.View(visible, raw, CrossReferences.clean(raw), selected.counted);
-        items.add(new DayContentRules.Item(item.original(), item.projection(), view));
+        items.add(new DayContentRules.Item(item.original(), item.projection(), view, item.path()));
       }
       var children = filtered(node.children(), query, full);
       for (var child : children) rank = Math.min(rank, child.rank());

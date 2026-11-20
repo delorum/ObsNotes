@@ -19,6 +19,7 @@ public final class EditorState {
   public boolean appendTaskText = true;
   public boolean editFields = false, routesInitialized = false, routeChosen = false;
   public String fieldPrefix = "", taskShell = "";
+  public String workSnapshot;
   public boolean weatherForm = false;
   public boolean taskAppend = false;
   public String fallbackHeading = "";
@@ -115,6 +116,7 @@ public final class EditorState {
     s.editFields = editFields;
     s.fieldPrefix = fieldPrefix;
     s.taskShell = taskShell;
+    s.workSnapshot = workSnapshot;
     s.routesInitialized = routesInitialized;
     s.routeChosen = routeChosen;
     s.weatherForm = weatherForm;
@@ -342,6 +344,7 @@ public final class EditorState {
     if (parts != null) {
       for (var part : parts.parts) part.form().chooseDay(path, snapshot);
     }
+    workSnapshot = null;
     destinationPath = path;
     destinationSnapshot = path.equals(sourcePath) ? sourceSnapshot : snapshot;
     kind = Markdown.Kind.SECTION;
@@ -649,7 +652,7 @@ public final class EditorState {
   }
 
   public Routing.Catalog routingCatalog(Markdown template) {
-    return new Routing.Catalog(new Markdown(destinationSnapshot), template);
+    return new Routing.Catalog(new Markdown(destinationSnapshot), template, workSnapshot != null);
   }
 
   public void initializeRoutes(Markdown template) {
@@ -657,6 +660,11 @@ public final class EditorState {
     if (fallbackHeading.isEmpty()) fallbackHeading = heading;
     if (!fresh && !valueBound() && FieldBlock.parse(parts().body).present()) editFields = true;
     var catalog = routingCatalog(template);
+    if (WorkDaily.selected(this)) {
+      routes = List.of(WorkDaily.choice());
+      routesInitialized = routeChosen = true;
+      return;
+    }
     List<Routing.Choice> choices = new ArrayList<>();
     choices.add(catalog.resolve(target()));
     Set<String> headings = new HashSet<>();
@@ -699,6 +707,10 @@ public final class EditorState {
             ? new Markdown.Target(fallbackHeading, fallbackHeading, -1, "", Markdown.Kind.SECTION)
             : choices.get(0).target();
     chooseTarget(selected);
+    if (WorkDaily.selected(this)) {
+      removeValueTarget();
+      for (int i = tags().size() - 1; i >= 0; i--) removeTag(i);
+    }
     Parts p = parts();
     TaggedText body = TaggedText.parse(editableBody(p));
     List<TaggedText.Tag> keep = new ArrayList<>();
@@ -725,6 +737,10 @@ public final class EditorState {
   }
 
   public String validateRoutes(List<Routing.Choice> choices) {
+    if (WorkDaily.selected(choices)) {
+      if (workSnapshot == null) return "Рабочая заметка не найдена";
+      if (choices.size() != 1) return "У рабочей записи один раздел — Основные события";
+    }
     String error = Routing.validate(choices);
     if (error != null) return error;
     if (valueBound()

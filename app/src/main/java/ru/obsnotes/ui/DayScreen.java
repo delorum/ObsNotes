@@ -28,9 +28,17 @@ public final class DayScreen {
 
     void edit(Markdown.Block block);
 
+    default void edit(Markdown.Block block, String sourcePath) {
+      edit(block);
+    }
+
     void refresh();
 
     void delete(Markdown.Block block, boolean projection);
+
+    default void delete(Markdown.Block block, boolean projection, String sourcePath) {
+      delete(block, projection);
+    }
 
     void toggle(DiaryTasks.Task task);
 
@@ -49,6 +57,7 @@ public final class DayScreen {
       LocalDate date,
       Markdown document,
       Markdown template,
+      WorkDaily.Note workNote,
       DayContentRules rules,
       HiddenSections visibility,
       boolean connected,
@@ -98,7 +107,9 @@ public final class DayScreen {
       ui.error(DayNavigation.NOT_FOUND);
       return next;
     }
-    var outline = visibility.outline(DayOutline.sections(document, template, rules));
+    var outline =
+        visibility.outline(
+            WorkDaily.outline(DayOutline.sections(document, template, rules), workNote, rules));
     var catalog = new Routing.Catalog(document, template);
     DaySearch index = new DaySearch(outline, rules);
     EditText search = ui.searchField(ui.body, "Поиск разделов", query, expanded::clear);
@@ -187,6 +198,7 @@ public final class DayScreen {
     // Search can match a parent and its child; render each visible heading once.
     if (headers.containsKey(heading)) return;
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
+    card.setPadding(0, ui.dp(8), 0, ui.dp(8));
     headers.put(heading, card);
     boolean open = !query.isBlank() || expanded.contains(heading);
     boolean whole = query.isBlank() || fullHeadings.contains(heading);

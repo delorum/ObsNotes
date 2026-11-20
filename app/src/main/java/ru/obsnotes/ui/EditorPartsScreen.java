@@ -61,11 +61,15 @@ final class EditorPartsScreen {
     ui.body.addView(panels);
     Routing.Catalog catalog = owner.routingCatalog(template);
     List<LinearLayout> cards = new ArrayList<>();
+    List<android.view.View> noteTools = new ArrayList<>();
     Runnable[] render = new Runnable[1];
     Runnable updateActive =
         () -> {
           updateLock.run();
           int at = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
+          boolean simple = WorkDaily.selected(owner.parts.parts.get(at).form());
+          for (var control : noteTools)
+            control.setVisibility(simple ? android.view.View.GONE : android.view.View.VISIBLE);
           for (int i = 0; i < cards.size(); i++) {
             boolean active = i == at;
             LinearLayout card = cards.get(i);
@@ -118,7 +122,8 @@ final class EditorPartsScreen {
               chips.addView(key, 0);
             }
             colorOffset += LineMarks.of(form.editableText(), form.tags()).size();
-            var refs = owner.parts.references(index);
+            var refs =
+                WorkDaily.selected(form) ? List.<EventLink>of() : owner.parts.references(index);
             for (int n = 0; n < refs.size(); n++) {
               var ref = refs.get(n);
               Chip relation = EditorScreen.chip(ui, owner.parts.referenceLabel(ref), Ui.MUTED);
@@ -148,7 +153,7 @@ final class EditorPartsScreen {
                   });
               chips.addView(relation);
             }
-            if (owner.parts.isRoot(index)) {
+            if (!WorkDaily.selected(form) && owner.parts.isRoot(index)) {
               Chip root = EditorScreen.chip(ui, "Корень", Ui.MUTED);
               root.setContentDescription("Корень части " + (index + 1));
               root.setOnClickListener(v -> scoped.related());
@@ -233,6 +238,8 @@ final class EditorPartsScreen {
               .show();
         });
     tools.addView(lock, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
+    noteTools.add(tools.getChildAt(1));
+    noteTools.add(tools.getChildAt(2));
     ui.body.addView(tools);
     LinearLayout relations = ui.row();
     ui.weighted(
@@ -261,6 +268,8 @@ final class EditorPartsScreen {
           actions.related();
         });
     ui.body.addView(relations);
+    noteTools.add(relations);
+    updateActive.run();
     for (int i = 0; i < owner.fieldCount(); i++)
       if (owner.fieldName(i).equals("Погода") || owner.fieldName(i).equals("Температура")) {
         EditorScreen.weatherRow(ui, owner, weatherCity, actions);

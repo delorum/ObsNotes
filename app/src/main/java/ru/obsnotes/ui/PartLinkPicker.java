@@ -18,7 +18,7 @@ final class PartLinkPicker {
         refs.stream().filter(ref -> ref.key().equals(replacing)).findFirst().orElse(null);
     int selected = -1;
     for (int i = 0; i < owner.parts.parts.size(); i++)
-      if (i != index) {
+      if (i != index && !WorkDaily.selected(owner.parts.parts.get(i).form())) {
         String id = owner.parts.parts.get(i).form().partId;
         if (refs.stream()
             .anyMatch(ref -> ref.local() && ref.part().equals(id) && !ref.key().equals(replacing)))

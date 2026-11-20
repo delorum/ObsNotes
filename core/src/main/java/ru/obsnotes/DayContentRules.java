@@ -77,12 +77,24 @@ public final class DayContentRules {
 
   public record View(List<MarkdownLines.Line> lines, String raw, String text, boolean counted) {}
 
-  public record Item(Markdown.Block original, boolean projection, View view) {}
+  public record Item(Markdown.Block original, boolean projection, View view, String path) {
+    public Item(Markdown.Block original, boolean projection, View view) {
+      this(original, projection, view, "");
+    }
+  }
 
   public View view(String source) {
     List<MarkdownLines.Line> visible = new ArrayList<>();
-    boolean counted = false, generatedCallout = false;
+    boolean counted = false, generatedCallout = false, workCallout = false;
     for (var line : MarkdownLines.scan(source)) {
+      if (!line.literal() && line.text().matches("^> \\[!info]- Работа за \\d{4}-\\d{2}-\\d{2}.*$"))
+        workCallout = true;
+      else if (workCallout && !line.literal() && line.text().matches("^> \\[![^]]+].*$"))
+        workCallout = false;
+      if (workCallout) {
+        if (line.text().stripLeading().startsWith(">") || line.text().isBlank()) continue;
+        workCallout = false;
+      }
       if (!line.literal() && hidden(line.text())) continue;
       visible.add(line);
       if (line.text().startsWith("> [!info]- Дополнения к событию")) generatedCallout = true;

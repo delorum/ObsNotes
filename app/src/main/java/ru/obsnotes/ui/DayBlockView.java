@@ -21,7 +21,10 @@ final class DayBlockView {
     LinearLayout box = ui.column();
     FrameLayout frame = SwipeToDelete.wrap(ui, box);
     List<View> gestures = new ArrayList<>();
-    var tasks = DiaryTasks.in(block.text(), block.start());
+    var tasks =
+        item.path().isEmpty()
+            ? DiaryTasks.in(block.text(), block.start())
+            : List.<DiaryTasks.Task>of();
     if (!tasks.isEmpty()
         && item.view().lines().stream()
             .anyMatch(
@@ -40,7 +43,7 @@ final class DayBlockView {
                 : byOffset.get(block.start() + line.start());
         if (task == null) {
           TextView note = ui.text(CrossReferences.clean(line.text()), 15, Ui.INK);
-          note.setOnClickListener(v -> actions.edit(block));
+          note.setOnClickListener(v -> actions.edit(block, item.path()));
           box.addView(note);
           gestures.add(note);
           continue;
@@ -69,7 +72,7 @@ final class DayBlockView {
         label.setOnClickListener(v -> actions.appendTask(task));
         label.setOnLongClickListener(
             v -> {
-              actions.edit(block);
+              actions.edit(block, item.path());
               return true;
             });
         box.addView(row);
@@ -77,7 +80,8 @@ final class DayBlockView {
         gestures.add(label);
       }
     } else {
-      String key = block.section().heading() + ":" + block.start() + ":" + projection;
+      String key =
+          item.path() + ":" + block.section().heading() + ":" + block.start() + ":" + projection;
       boolean open = expanded.contains(key);
       LinearLayout row = ui.row();
       TextView full =
@@ -111,15 +115,15 @@ final class DayBlockView {
       preview.setMinHeight(ui.dp(48));
       preview.setGravity(Gravity.CENTER_VERTICAL);
       ui.weighted(row, preview);
-      preview.setOnClickListener(v -> actions.edit(block));
-      full.setOnClickListener(v -> actions.edit(block));
+      preview.setOnClickListener(v -> actions.edit(block, item.path()));
+      full.setOnClickListener(v -> actions.edit(block, item.path()));
       box.addView(row);
       box.addView(full);
       gestures.add(expand);
       gestures.add(preview);
       gestures.add(full);
     }
-    Runnable remove = () -> actions.delete(block, projection);
+    Runnable remove = () -> actions.delete(block, projection, item.path());
     for (View gesture : gestures) SwipeToDelete.bind(ui, gesture, frame, box, remove);
     LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
     layout.bottomMargin = ui.dp(8);

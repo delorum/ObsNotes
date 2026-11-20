@@ -149,6 +149,18 @@ public final class VaultRepository {
       LocalDateTime now,
       CleanupRules rules) {
     if (EditorRevision.unchanged(state, template)) return List.of();
+    if (state.parts == null && WorkDaily.selected(state)) {
+      EditorState physical = WorkDaily.physical(state);
+      return plan(
+          physical,
+          source,
+          new Markdown(physical.destinationSnapshot),
+          WorkDaily.TEMPLATE,
+          date,
+          now,
+          rules);
+    }
+    if (WorkDaily.isPath(state.destinationPath)) template = WorkDaily.TEMPLATE;
     if (state.parts != null)
       return state.parts.plan(state, source, destination, template, date, now, rules);
     if (state.weatherForm)

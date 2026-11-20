@@ -49,6 +49,23 @@ public final class MainActivity extends AppCompatActivity {
   private Markdown template = new Markdown(""), document;
   private DayContentRules contentRules = DayContentRules.EMPTY;
   private EditorState editor;
+  private WorkDaily.Note workNote;
+  private String workError;
+
+  private record WorkState(WorkDaily.Note note, String error) {}
+
+  private WorkState readWork(VaultStorage selected, LocalDate date) {
+    try {
+      return new WorkState(WorkDaily.load(selected, date), null);
+    } catch (Exception error) {
+      return new WorkState(null, "Рабочая заметка недоступна");
+    }
+  }
+
+  private void setWork(WorkState loaded) {
+    workNote = loaded.note();
+    workError = loaded.error();
+  }
 
   private record TaskViewport(String path, int line, int y) {}
 
@@ -215,6 +232,7 @@ public final class MainActivity extends AppCompatActivity {
       DiaryIndex index,
       DiaryIndex.Opened opened,
       DayContentRules rules,
+      WorkState work,
       VaultRepository.Conflict conflict) {}
 
   private void connect(String value) {
@@ -242,13 +260,15 @@ public final class MainActivity extends AppCompatActivity {
             conflict = changed;
           }
           DiaryIndex next = new DiaryIndex();
-          return new Loaded(s, r, next, next.open(s, day), DayContentRules.load(s), conflict);
+          return new Loaded(
+              s, r, next, next.open(s, day), DayContentRules.load(s), readWork(s, day), conflict);
         },
         loaded -> {
           storage = loaded.storage;
           repository = loaded.repository;
           template = loaded.opened.template();
           contentRules = loaded.rules;
+          setWork(loaded.work);
           document = loaded.opened.document();
           path = loaded.opened.path();
           vault = value;
@@ -316,6 +336,8 @@ public final class MainActivity extends AppCompatActivity {
                     DayNavigation.open(selectedStorage, current, requested);
                 DayContentRules rules =
                     result.opened() ? DayContentRules.load(selectedStorage) : null;
+                WorkState requestedWork =
+                    result.opened() ? readWork(selectedStorage, requested) : null;
                 runOnUiThread(
                     () -> {
                       if (isDestroyed()
@@ -336,6 +358,7 @@ public final class MainActivity extends AppCompatActivity {
                       path = result.view().path();
                       document = result.view().document();
                       contentRules = rules;
+                      setWork(requestedWork);
                       lastError = null;
                       showDay();
                     });
@@ -357,11 +380,14 @@ public final class MainActivity extends AppCompatActivity {
     if (polling || busy) return;
     polling = true;
     String previous = document.text, requested = path;
+    WorkDaily.Note previousWork = workNote;
+    LocalDate requestedDay = day;
     SafVaultStorage selectedStorage = storage;
     io.execute(
         () -> {
           try {
             String fresh = selectedStorage.read(requested);
+            WorkState freshWork = readWork(selectedStorage, requestedDay);
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
@@ -371,8 +397,13 @@ public final class MainActivity extends AppCompatActivity {
                       && path.equals(requested)
                       && document != null
                       && document.text.equals(previous)
-                      && !fresh.equals(previous)) {
+                      && (!fresh.equals(previous)
+                          || !Objects.equals(
+                              previousWork == null ? null : previousWork.document().text,
+                              freshWork.note() == null ? null : freshWork.note().document().text)
+                          || !Objects.equals(workError, freshWork.error()))) {
                     document = new Markdown(fresh);
+                    setWork(freshWork);
                     showDayKeepingPosition();
                   }
                 });
@@ -396,6 +427,7 @@ public final class MainActivity extends AppCompatActivity {
             day,
             document,
             template,
+            workNote,
             contentRules,
             hiddenSections(document),
             connected,
@@ -435,6 +467,12 @@ public final class MainActivity extends AppCompatActivity {
                 if (!busy) startEditor(block, block.section().heading());
               }
 
+              public void edit(Markdown.Block block, String sourcePath) {
+                if (!busy)
+                  startEditor(
+                      block, sourcePath.isEmpty() ? block.section().heading() : WorkDaily.ROUTE);
+              }
+
               public void refresh() {
                 if (!busy) loadDay();
               }
@@ -445,6 +483,10 @@ public final class MainActivity extends AppCompatActivity {
 
               public void delete(Markdown.Block block, boolean projection) {
                 deleteBlock(block, projection);
+              }
+
+              public void delete(Markdown.Block block, boolean projection, String sourcePath) {
+                deleteBlock(block, projection, sourcePath);
               }
 
               public void toggle(DiaryTasks.Task task) {
@@ -475,6 +517,7 @@ public final class MainActivity extends AppCompatActivity {
               }
             });
     if (lastError != null) ui.error(lastError);
+    else if (workError != null) ui.error(workError);
     checkNextDay();
   }
 
@@ -588,10 +631,15 @@ public final class MainActivity extends AppCompatActivity {
     cancelNavigation();
     if (document == null) return;
     try {
-      editor =
-          block == null
-              ? EditorState.newNote(path, document, template, heading)
-              : EditorState.editing(path, document, template, block);
+      if (heading.equals(WorkDaily.ROOT) || heading.equals(WorkDaily.ROUTE)) {
+        editor = WorkDaily.editor(path, document, workNote, block, template);
+      } else {
+        editor =
+            block == null
+                ? EditorState.newNote(path, document, template, heading)
+                : EditorState.editing(path, document, template, block);
+        WorkDaily.snapshot(editor, workNote);
+      }
     } catch (IllegalArgumentException error) {
       ui.error(error.getMessage());
       return;
@@ -852,6 +900,8 @@ public final class MainActivity extends AppCompatActivity {
         });
   }
 
+  private record EditorDay(DiaryIndex.Day day, WorkState work) {}
+
   private void pickDestination() {
     if (busy) return;
     stopWeatherInEditor();
@@ -884,7 +934,8 @@ public final class MainActivity extends AppCompatActivity {
             work(
                 () -> {
                   try {
-                    return index.day(storage, selected.date());
+                    var loadedDay = index.day(storage, selected.date());
+                    return new EditorDay(loadedDay, readWork(storage, selected.date()));
                   } catch (java.io.FileNotFoundException absent) {
                     return null;
                   }
@@ -895,14 +946,21 @@ public final class MainActivity extends AppCompatActivity {
                     ui.error(lastError);
                     return;
                   }
-                  editor.chooseDay(loaded.path(), loaded.document().text);
+                  try {
+                    WorkDaily.requireTarget(editor, loaded.work().note());
+                  } catch (IllegalArgumentException missing) {
+                    ui.error(missing.getMessage());
+                    return;
+                  }
+                  editor.chooseDay(loaded.day().path(), loaded.day().document().text);
+                  WorkDaily.snapshot(editor, loaded.work().note());
                   recovery.save(editor, vault);
                   showEditor();
                 }));
   }
 
   private void pickTags(boolean oneLine, boolean person, int cursor) {
-    if (busy) return;
+    if (busy || WorkDaily.selected(editor.activePart())) return;
     EditorState form = editor.activePart();
     var catalog = form.routingCatalog(template);
     SearchPicker.show(
@@ -1051,6 +1109,8 @@ public final class MainActivity extends AppCompatActivity {
         ConflictDialog.show(ui, !editor.conflictCopyText().isBlank(), this::resolveConflict);
   }
 
+  private record ResolvedConflict(ConflictResolution.Opened opened, WorkState work) {}
+
   private void resolveConflict(boolean copy) {
     if (busy || editor == null) return;
     cancelWeather();
@@ -1062,15 +1122,16 @@ public final class MainActivity extends AppCompatActivity {
               ConflictResolution.resolve(
                   repository, storage, form, template, copy, LocalDateTime.now());
           recovery.clear(selectedVault);
-          return result;
+          return new ResolvedConflict(result, readWork(storage, WorkDaily.date(result.path())));
         },
         result -> {
           editor = null;
           conflictPending = false;
           taskViewport = null;
-          path = result.path();
+          path = result.opened().path();
           day = LocalDate.parse(DiaryLayout.fileName(path).substring(0, 10));
-          document = result.document();
+          document = result.opened().document();
+          setWork(result.work());
           showDay();
         });
   }
@@ -1127,14 +1188,22 @@ public final class MainActivity extends AppCompatActivity {
           editor = null;
           if (!changes.isEmpty()) {
             if (returnY < 0) checklistContext = null;
-            var result =
+            path = form.destinationPath;
+            day = WorkDaily.date(path);
+            var dailyChange =
+                changes.stream().filter(c -> c.path().equals(path)).findFirst().orElse(null);
+            document =
+                new Markdown(dailyChange == null ? form.destinationSnapshot : dailyChange.after());
+            String selectedWork = WorkDaily.path(day);
+            var workChange =
                 changes.stream()
-                    .filter(c -> c.path().equals(form.destinationPath))
+                    .filter(c -> c.path().equals(selectedWork))
                     .findFirst()
-                    .orElse(changes.get(0));
-            day = LocalDate.parse(DiaryLayout.fileName(result.path()).substring(0, 10));
-            path = result.path();
-            document = new Markdown(result.after());
+                    .orElse(null);
+            String workText = workChange != null ? workChange.after() : form.workSnapshot;
+            workNote =
+                workText == null ? null : new WorkDaily.Note(selectedWork, new Markdown(workText));
+            workError = null;
           }
           taskViewport = null;
           if (returnY >= 0) showDayAt(returnY);
@@ -1154,14 +1223,25 @@ public final class MainActivity extends AppCompatActivity {
         },
         after -> {
           if (path.equals(selectedPath)) document = after;
+          else if (workNote != null && workNote.path().equals(selectedPath))
+            workNote = new WorkDaily.Note(selectedPath, after);
+          checklistContext = null;
           showDayKeepingPosition();
         });
   }
 
   private void deleteBlock(Markdown.Block block, boolean projection) {
+    deleteBlock(block, projection, "");
+  }
+
+  private void deleteBlock(Markdown.Block block, boolean projection, String sourcePath) {
     if (busy || document == null) return;
-    Markdown before = document;
-    String selectedPath = path;
+    if (!sourcePath.isEmpty() && (workNote == null || !workNote.path().equals(sourcePath))) {
+      ui.error("Рабочая заметка не найдена");
+      return;
+    }
+    Markdown before = sourcePath.isEmpty() ? document : workNote.document();
+    String selectedPath = sourcePath.isEmpty() ? path : sourcePath;
     SafVaultStorage selectedStorage = storage;
     String message =
         (projection
@@ -1391,8 +1471,16 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private HiddenSections hiddenSections(Markdown source) {
+    return hiddenSections(source, workNote != null);
+  }
+
+  private HiddenSections hiddenSections(Markdown source, boolean withWork) {
+    Markdown visibleTemplate =
+        withWork
+            ? new Markdown(template.text + "\n\n" + WorkDaily.ROOT + "\n" + WorkDaily.ROUTE + "\n")
+            : template;
     return new HiddenSections(
-        source == null ? new Markdown("") : source, template, sectionVisibility.load(vault));
+        source == null ? new Markdown("") : source, visibleTemplate, sectionVisibility.load(vault));
   }
 
   private HiddenSections hiddenFor(EditorState form) {
@@ -1400,7 +1488,7 @@ public final class MainActivity extends AppCompatActivity {
         document != null && form.destinationSnapshot.equals(document.text)
             ? document
             : new Markdown(form.destinationSnapshot);
-    return hiddenSections(source);
+    return hiddenSections(source, form.workSnapshot != null);
   }
 
   private void showHiddenSections() {
@@ -1468,6 +1556,7 @@ public final class MainActivity extends AppCompatActivity {
           }
         });
     if (lastError != null) ui.error(lastError);
+    else if (workError != null) ui.error(workError);
   }
 
   private void chooseVault() {
