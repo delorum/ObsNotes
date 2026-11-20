@@ -559,6 +559,62 @@ class ValuePartsTest(unittest.TestCase):
         self.assertIn('old',self.note().split('## Работа')[1].split('## Дом')[0])
         print('Phone: tap value badges retargets field to task and task value to ordinary section passed',flush=True)
 
+    def test_12_name_matching_shows_whole_section_and_content_matching_stays_pruned(self):
+        original = ('## Заметки\n\nMoveMe\n\n## FamilyGroup\nParentEntry\n\n'
+            + cross('### PersonAda','AdaAlias')
+            + 'FirstEntry\n\nSecondEntry\n\nMetric:: unrelated\n'
+              '- [ ] #task/diary/fact UnrelatedTask\n\n'
+              '#### Deep\nDeepEntry\n\n### OtherPerson\nSiblingEntry\n\n'
+              '## FactsGroup\nParentOther\n\n### LeafFields\n'
+              'TargetKey:: NeedleTarget\nOtherKey:: IgnoreValue\n'
+              '- [ ] #task/dairy/fact NeedleTargetTask\n- [ ] #task/dairy/fact IgnoreTask\n')
+        d.adb('shell','am','force-stop','ru.obsnotes')
+        e.put(self.relative,original)
+        e.put('Шаблоны/Шаблон дневниковой записи.md',original)
+        self.start()
+        for query in ('PersonAda','PersonAd','psnd','AdaAlias'):
+            d.query(query)
+            tree=d.tree()
+            self.assertTrue(d.nodes(tree,desc='Развернуть раздел FamilyGroup'))
+            self.assertTrue(d.nodes(tree,desc='Развернуть раздел PersonAda'))
+            for label in ('FirstEntry','SecondEntry','Metric:: unrelated'):
+                self.assertIsNotNone(d.find(text=label))
+            self.assertIsNotNone(d.find(desc='Редактировать задачу: UnrelatedTask'))
+            self.assertIsNotNone(d.find(desc='Развернуть раздел Deep'))
+            self.assertIsNotNone(d.find(text='DeepEntry'))
+            tree=d.tree()
+            for label in ('ParentEntry','SiblingEntry','ParentOther'):
+                self.assertFalse(d.nodes(tree,text=label),label)
+            if query=='psnd':
+                Path('/tmp/obsnotes-whole-section-device.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        print('Phone: exact, literal, fuzzy and alias name matching show all blocks, fields, tasks and descendants; ancestor/sibling content absent',flush=True)
+        d.query('ndltrgt')
+        tree=d.tree()
+        self.assertTrue(d.nodes(tree,desc='Развернуть раздел FactsGroup'))
+        self.assertTrue(d.nodes(tree,desc='Развернуть раздел LeafFields'))
+        self.assertTrue(d.nodes(tree,desc='Dataview: TargetKey:: NeedleTarget'))
+        self.assertTrue(d.nodes(tree,desc='Редактировать задачу: NeedleTargetTask'))
+        for label in ('OtherKey:: IgnoreValue','IgnoreTask','ParentOther','FirstEntry'):
+            self.assertFalse(d.nodes(tree,text=label),label)
+        Path('/tmp/obsnotes-content-only-device.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        self.assertEqual(original,self.note())
+        print('Phone: content-only fuzzy match keeps just its key/task and ancestor path; source unchanged',flush=True)
+        d.query('psnd')
+        stamp=d.adb('shell','stat','-c','%y',d.PHONE+'/'+self.relative)
+        d.tap(d.find(text='FirstEntry'))
+        d.wait_for(d.keyboard_shown)
+        self.assertEqual('FirstEntry',e.input_field().get('text'))
+        self.save()
+        self.assertEqual(original,self.note())
+        self.assertEqual(stamp,d.adb('shell','stat','-c','%y',d.PHONE+'/'+self.relative))
+        self.assertIsNotNone(d.find(text='SecondEntry'))
+        d.tap(d.find(desc='Очистить поиск',down=False))
+        p.hide_ime()
+        tree=d.tree()
+        self.assertFalse(d.nodes(tree,desc='Развернуть раздел PersonAda'))
+        self.assertFalse(d.nodes(tree,text='FirstEntry'))
+        print('Phone: ordinary entry opens from a name result, unchanged exit preserves bytes/mtime, clear collapses all',flush=True)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

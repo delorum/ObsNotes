@@ -2,7 +2,7 @@ package ru.obsnotes;
 
 import java.util.*;
 
-/** Pruned search tree. Ancestors provide context; only matching field/task lines remain. */
+/** Name matches retain complete sections; content matches retain only matching field/task lines. */
 public final class DaySearch {
   private record Line(
       DayContentRules.Item item, MarkdownLines.Line line, String label, boolean counted) {}
@@ -14,6 +14,9 @@ public final class DaySearch {
 
   private final List<DayOutline.Section> original;
   private final List<Node> roots;
+  private final Set<String> allHeadings;
+
+  public record Result(List<DayOutline.Section> sections, Set<String> fullHeadings) {}
 
   public DaySearch(List<DayOutline.Section> outline, Routing.Catalog catalog) {
     this(outline, catalog, DayContentRules.EMPTY);
@@ -23,6 +26,9 @@ public final class DaySearch {
       List<DayOutline.Section> outline, Routing.Catalog catalog, DayContentRules rules) {
     original = outline;
     roots = outline.stream().map(s -> index(s, catalog, rules)).toList();
+    Set<String> headings = new LinkedHashSet<>();
+    for (var section : outline) includeWhole(section, headings);
+    allHeadings = Set.copyOf(headings);
   }
 
   private static Node index(
@@ -49,8 +55,19 @@ public final class DaySearch {
   }
 
   public List<DayOutline.Section> find(String query) {
-    if (query.isBlank()) return original;
-    return filtered(roots, query).stream().map(Hit::section).toList();
+    return result(query).sections();
+  }
+
+  public Result result(String query) {
+    if (query.isBlank()) return new Result(original, allHeadings);
+    Set<String> full = new LinkedHashSet<>();
+    var sections = filtered(roots, query, full).stream().map(Hit::section).toList();
+    return new Result(sections, Set.copyOf(full));
+  }
+
+  private static void includeWhole(DayOutline.Section section, Set<String> headings) {
+    headings.add(section.heading());
+    for (var child : section.children()) includeWhole(child, headings);
   }
 
   /** Fields have dedicated result rows; keep matching tasks in the same source block visible. */
@@ -81,10 +98,11 @@ public final class DaySearch {
     return List.copyOf(result);
   }
 
-  private static List<Hit> filtered(List<Node> nodes, String query) {
+  private static List<Hit> filtered(List<Node> nodes, String query, Set<String> full) {
     List<Hit> hits = new ArrayList<>();
     for (Node node : nodes) {
-      int rank = FuzzySearch.rank(node.label(), query);
+      int nameRank = FuzzySearch.rank(node.label(), query);
+      int rank = nameRank;
       var lines = FuzzySearch.ranked(node.lines(), query, Line::label);
       Map<DayContentRules.Item, List<MarkdownLines.Line>> grouped = new LinkedHashMap<>();
       for (Line line : lines) {
@@ -104,18 +122,23 @@ public final class DaySearch {
                 lines.stream().anyMatch(l -> l.item().equals(item) && l.counted()));
         items.add(new DayContentRules.Item(item.original(), item.projection(), view));
       }
-      var children = filtered(node.children(), query);
+      var children = filtered(node.children(), query, full);
       for (var child : children) rank = Math.min(rank, child.rank());
       if (rank == Integer.MAX_VALUE) continue;
       var s = node.section();
-      hits.add(
-          new Hit(
-              new DayOutline.Section(
-                  s.heading(),
-                  s.title(),
-                  List.copyOf(items),
-                  children.stream().map(Hit::section).toList()),
-              rank));
+      DayOutline.Section visible;
+      if (nameRank != Integer.MAX_VALUE) {
+        visible = s;
+        includeWhole(s, full);
+      } else {
+        visible =
+            new DayOutline.Section(
+                s.heading(),
+                s.title(),
+                List.copyOf(items),
+                children.stream().map(Hit::section).toList());
+      }
+      hits.add(new Hit(visible, rank));
     }
     hits.sort(Comparator.comparingInt(Hit::rank));
     return List.copyOf(hits);

@@ -172,11 +172,162 @@ public class DaySearchTreeTest {
     var hits = search.find("за ");
     assertEquals(1, hits.size());
     assertEquals("## Заказ", hits.get(0).heading());
-    assertTrue(hits.get(0).items().isEmpty());
+    assertEquals("Summary:: Filled", hits.get(0).items().get(0).view().raw());
     assertTrue(search.find("acbd").isEmpty());
     assertTrue(catalog.matchingFields("## Inbox", "tcb").isEmpty());
     assertEquals("## Inbox", search.find("барабан").get(0).heading());
     assertEquals(1, search.find("барабан").get(0).items().get(0).view().lines().size());
     assertEquals("## Inbox", search.find("осмтрн").get(0).heading());
+  }
+
+  @Test
+  public void exactLiteralAndFuzzyNameMatchesKeepAllContentAndDescendants() {
+    var doc =
+        new Markdown(
+            "## Inbox\n"
+                + "Ignored\n\n"
+                + "## Лада\n"
+                + "First entry\n\n"
+                + "Second entry\n\n"
+                + "Value:: unrelated\n"
+                + "- [ ] #task/diary/fact Unrelated task\n"
+                + "### Details\n"
+                + "Nested entry\n\n"
+                + "#### Deep\n"
+                + "Deep entry\n\n"
+                + "## Other\n"
+                + "Hidden by search\n");
+    var outline = DayOutline.sections(doc, doc);
+    var search = new DaySearch(outline, new Routing.Catalog(doc, doc));
+    var original =
+        outline.stream().filter(x -> x.heading().equals("## Лада")).findFirst().orElseThrow();
+    for (String query : List.of("Лада", "лад", "лд ")) {
+      var result = search.result(query);
+      assertEquals(1, result.sections().size());
+      assertSame(original, result.sections().get(0));
+      assertEquals(original.count(), result.sections().get(0).count());
+      assertEquals(Set.of("## Лада", "### Details", "#### Deep"), result.fullHeadings());
+      assertTrue(
+          result.sections().get(0).items().stream()
+              .anyMatch(i -> i.view().text().equals("Second entry")));
+      assertEquals(
+          "Deep entry",
+          result
+              .sections()
+              .get(0)
+              .children()
+              .get(0)
+              .children()
+              .get(0)
+              .items()
+              .get(0)
+              .view()
+              .text());
+    }
+  }
+
+  @Test
+  public void nestedNameMatchRetainsOnlyAncestorPathButKeepsWholeMatchingBranch() {
+    var doc =
+        new Markdown(
+            "## Family\nParent entry\n\n### Лада\nPersonal entry\n\n"
+                + "#### Details\nChild entry\n\n### Sibling\nSibling entry\n");
+    var search = new DaySearch(DayOutline.sections(doc, doc), new Routing.Catalog(doc, doc));
+    var result = search.result("лд");
+    var parent = result.sections().get(0);
+    assertEquals("## Family", parent.heading());
+    assertTrue(parent.items().isEmpty());
+    assertEquals(1, parent.children().size());
+    assertEquals("Personal entry", parent.children().get(0).items().get(0).view().text());
+    assertEquals(
+        "Child entry", parent.children().get(0).children().get(0).items().get(0).view().text());
+    assertEquals(Set.of("### Лада", "#### Details"), result.fullHeadings());
+  }
+
+  @Test
+  public void contentOnlyHitsStayPrunedBesideAWholeNameMatch() {
+    var doc =
+        new Markdown(
+            "## River\nOrdinary entry\n\nField:: unrelated\n"
+                + "## Parent\nUnmatched parent entry\n\n### Leaf\nField:: River\nOther:: ignore\n"
+                + "- [ ] #task/diary/fact River task\n- [ ] #task/diary/fact Ignore task\n");
+    var search = new DaySearch(DayOutline.sections(doc, doc), new Routing.Catalog(doc, doc));
+    var result = search.result("River");
+    assertEquals(2, result.sections().size());
+    assertEquals(Set.of("## River"), result.fullHeadings());
+    var whole =
+        result.sections().stream()
+            .filter(x -> x.heading().equals("## River"))
+            .findFirst()
+            .orElseThrow();
+    assertTrue(whole.items().stream().anyMatch(i -> i.view().text().equals("Ordinary entry")));
+    var path =
+        result.sections().stream()
+            .filter(x -> x.heading().equals("## Parent"))
+            .findFirst()
+            .orElseThrow();
+    assertTrue(path.items().isEmpty());
+    String lines = path.children().get(0).items().get(0).view().raw();
+    assertTrue(lines.contains("Field:: River"));
+    assertTrue(lines.contains("River task"));
+    assertFalse(lines.contains("ignore"));
+    assertFalse(lines.contains("Ignore task"));
+  }
+
+  @Test
+  public void fullAliasMatchRespectsHiddenSectionsAndExcludedPlaceholders() {
+    var doc =
+        new Markdown(
+            "## Parent\n"
+                + "### Visible\n"
+                + "```dataviewjs\n"
+                + "await dv.view(\"Скрипты/Dataview/crossPeople\", {person: \"SpecialAlias\"});\n"
+                + "```\n\n"
+                + "Visible entry\n"
+                + "HiddenPlaceholder\n\n"
+                + "#### Hidden\n"
+                + "Hidden child\n");
+    var rules = new DayContentRules(List.of("HiddenPlaceholder"), List.of());
+    var visibility = new HiddenSections(doc, doc, Set.of("#### Hidden"));
+    var outline = visibility.outline(DayOutline.sections(doc, doc, rules));
+    var search = new DaySearch(outline, new Routing.Catalog(doc, doc), rules);
+    var result = search.result("spclls");
+    var section = result.sections().get(0).children().get(0);
+    assertEquals("Visible entry", section.items().get(0).view().text());
+    assertTrue(section.children().isEmpty());
+    assertEquals(Set.of("### Visible"), result.fullHeadings());
+    assertTrue(search.result("Hidden child").sections().isEmpty());
+    assertSame(outline, search.result("").sections());
+    assertEquals(Set.of("## Parent", "### Visible"), search.result("").fullHeadings());
+  }
+
+  @Test
+  public void fullSectionKeepsCrossReferencesAndClosedSecretsAsNormalVisibleItems() {
+    var template =
+        new Markdown(
+            "## Inbox\n"
+                + "## Target\n"
+                + "```dataviewjs\n"
+                + "await dv.view(\"Скрипты/Dataview/crossPeople\", {person: \"TargetAlias\"});\n"
+                + "```\n");
+    var doc =
+        new Markdown(
+            "## Inbox\nShared entry #crossPeople/TargetAlias\n\n"
+                + "## Target\nLocal entry\n\n`secret QUJDREVGR0hJSktMTU5P`\n");
+    var outline = DayOutline.sections(doc, template);
+    var search = new DaySearch(outline, new Routing.Catalog(doc, template));
+    var result = search.result("trgtls");
+    assertEquals(1, result.sections().size());
+    var full = result.sections().get(0);
+    assertEquals("## Target", full.heading());
+    assertEquals(3, full.items().size());
+    assertEquals(1, full.items().stream().filter(DayContentRules.Item::projection).count());
+    assertTrue(full.items().stream().anyMatch(i -> i.view().text().equals("Local entry")));
+    assertTrue(
+        full.items().stream().anyMatch(i -> i.view().text().contains(SecretText.PLACEHOLDER)));
+    assertFalse(
+        full.items().stream().anyMatch(i -> i.view().text().contains("QUJDREVGR0hJSktMTU5P")));
+    assertTrue(search.find("QUJDREVGR0hJSktMTU5P").isEmpty());
+    assertEquals(Set.of("## Target"), result.fullHeadings());
   }
 }

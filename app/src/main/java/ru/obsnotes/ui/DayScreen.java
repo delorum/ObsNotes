@@ -137,7 +137,8 @@ public final class DayScreen {
         () -> {
           results.removeAllViews();
           headers.clear();
-          for (var section : index.find(search.getText().toString()))
+          var found = index.result(search.getText().toString());
+          for (var section : found.sections())
             section(
                 ui,
                 results,
@@ -147,7 +148,8 @@ public final class DayScreen {
                 headers,
                 reveal,
                 catalog,
-                search.getText().toString());
+                search.getText().toString(),
+                found.fullHeadings());
           if (results.getChildCount() == 0)
             results.addView(ui.text("Разделы не найдены", 14, Ui.MUTED));
         };
@@ -179,26 +181,38 @@ public final class DayScreen {
       Map<String, android.view.View> headers,
       Consumer<String> reveal,
       Routing.Catalog catalog,
-      String query) {
+      String query,
+      Set<String> fullHeadings) {
     String heading = section.heading();
     // Search can match a parent and its child; render each visible heading once.
     if (headers.containsKey(heading)) return;
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
     headers.put(heading, card);
     boolean open = !query.isBlank() || expanded.contains(heading);
-    var fields = catalog.matchingFields(section, query);
+    boolean whole = query.isBlank() || fullHeadings.contains(heading);
+    var fields = catalog.matchingFields(section, whole ? "" : query);
     var items = DaySearch.withoutFields(section.items(), fields);
     boolean[] populated = {false};
     Runnable populate =
         () -> {
           if (populated[0]) return;
           populated[0] = true;
-          if (query.isBlank() && heading.equals("## Чеклист"))
+          if (whole && heading.equals("## Чеклист"))
             ChecklistTable.add(ui, content, actions, reveal);
           for (var item : items) DayBlockView.add(ui, content, item, expanded, actions);
           for (var child : section.children())
-            section(ui, content, child, expanded, actions, headers, reveal, catalog, query);
-          if (query.isBlank()
+            section(
+                ui,
+                content,
+                child,
+                expanded,
+                actions,
+                headers,
+                reveal,
+                catalog,
+                query,
+                fullHeadings);
+          if (whole
               && section.items().isEmpty()
               && section.children().isEmpty()
               && !heading.equals("## Чеклист")) content.addView(ui.text("Пусто", 14, Ui.MUTED));
