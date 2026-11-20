@@ -32,13 +32,19 @@ public final class FuzzySearch {
   }
 
   public static boolean matches(String text, String query) {
-    String haystack = text.toLowerCase(Locale.ROOT).replace('ё', 'е');
-    String needle = query.toLowerCase(Locale.ROOT).replace('ё', 'е');
+    int[] needle = normalized(query).codePoints().filter(c -> !Character.isWhitespace(c)).toArray();
+    // Each line is an independent search term (title, value, alias), not a continuation.
+    for (String field : normalized(text).split("\\R", -1))
+      if (subsequence(field, needle)) return true;
+    return false;
+  }
+
+  private static boolean subsequence(String field, int[] needle) {
     int at = 0;
-    for (int cp : needle.codePoints().filter(c -> !Character.isWhitespace(c)).toArray()) {
+    for (int cp : needle) {
       boolean found = false;
-      while (at < haystack.length()) {
-        int ch = haystack.codePointAt(at);
+      while (at < field.length()) {
+        int ch = field.codePointAt(at);
         at += Character.charCount(ch);
         if (ch == cp) {
           found = true;

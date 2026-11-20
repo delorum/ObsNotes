@@ -159,4 +159,24 @@ public class DaySearchTreeTest {
         doc.text.indexOf("- [ ]"),
         items.get(0).original().start() + items.get(0).view().lines().get(0).start());
   }
+
+  @Test
+  public void repeatedTaskTitlesAndDifferentFieldValuesCannotInventFuzzyMatches() {
+    var doc =
+        new Markdown(
+            "## Inbox\n- [ ] #task/diary/fact Арбуз\n"
+                + "- [x] #task/dairy/fact Барабан; осмотрен ✅ 2001-02-03\n"
+                + "Metric:: ab\nOther:: cd\n## Заказ\nSummary:: Filled\n");
+    var catalog = new Routing.Catalog(doc, doc);
+    var search = new DaySearch(DayOutline.sections(doc, doc), catalog);
+    var hits = search.find("за ");
+    assertEquals(1, hits.size());
+    assertEquals("## Заказ", hits.get(0).heading());
+    assertTrue(hits.get(0).items().isEmpty());
+    assertTrue(search.find("acbd").isEmpty());
+    assertTrue(catalog.matchingFields("## Inbox", "tcb").isEmpty());
+    assertEquals("## Inbox", search.find("барабан").get(0).heading());
+    assertEquals(1, search.find("барабан").get(0).items().get(0).view().lines().size());
+    assertEquals("## Inbox", search.find("осмтрн").get(0).heading());
+  }
 }
