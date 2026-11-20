@@ -109,11 +109,15 @@ final class EditorPartsScreen {
             card.addView(chips);
             EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of(), colorOffset, false);
             if (form.valueBound()) {
-              Chip key = EditorScreen.chip(ui, form.valueLabel(), Ui.INK);
-              key.setContentDescription(
-                  (form.taskShell.isEmpty() ? "Dataview-ключ " : "Задача ") + form.valueLabel());
+              boolean task = !form.taskShell.isEmpty();
+              Chip key =
+                  task
+                      ? EditorScreen.taskChip(ui, form.valueLabel(), Ui.INK)
+                      : EditorScreen.chip(ui, form.valueLabel(), Ui.INK);
+              if (!task) key.setContentDescription("Dataview-ключ " + form.valueLabel());
               key.setOnClickListener(v -> scoped.valueTarget());
-              key.setCloseIconContentDescription("Удалить назначение: " + form.valueLabel());
+              key.setCloseIconContentDescription(
+                  "Удалить назначение: " + (task ? "Задача: " : "") + form.valueLabel());
               key.setOnCloseIconClickListener(
                   v -> {
                     form.removeValueTarget();

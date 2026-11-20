@@ -258,15 +258,14 @@ public final class EditorScreen {
     for (int i = 0; i < state.routes.size(); i++) {
       int index = i;
       var route = state.routes.get(i);
+      int color = i == 0 ? Ui.INK : Ui.ACCENT;
       Chip chip =
-          chip(
-              ui,
-              route.target().kind() == Markdown.Kind.FIELD
-                  ? route.label() + "::"
-                  : route.target().kind() == Markdown.Kind.TASK
-                      ? "Задача: " + route.label()
-                      : route.label(),
-              i == 0 ? Ui.INK : Ui.ACCENT);
+          route.target().kind() == Markdown.Kind.TASK
+              ? taskChip(ui, route.label(), color)
+              : chip(
+                  ui,
+                  route.label() + (route.target().kind() == Markdown.Kind.FIELD ? "::" : ""),
+                  color);
       chip.setCloseIconContentDescription("Удалить раздел: " + route.label());
       chip.setOnClickListener(
           v -> {
@@ -364,6 +363,18 @@ public final class EditorScreen {
               android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       }
     }
+  }
+
+  static Chip taskChip(Ui ui, String label, int color) {
+    Chip chip = chip(ui, label, color);
+    chip.setChipIcon(
+        androidx.appcompat.content.res.AppCompatResources.getDrawable(
+            ui.activity, ru.obsnotes.R.drawable.ic_task));
+    chip.setChipIconTint(android.content.res.ColorStateList.valueOf(color));
+    chip.setChipIconSize(ui.dp(18));
+    chip.setChipIconVisible(true);
+    chip.setContentDescription("Задача: " + label);
+    return chip;
   }
 
   static Chip chip(Ui ui, String label, int color) {

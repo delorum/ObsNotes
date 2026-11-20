@@ -58,7 +58,7 @@ public class ValueTargetTest {
             "## Факты\n- [x] #task/dairy/fact Routine; old; detail ✅ 1999-01-01 ^stable\n");
     var s = task(doc, 0);
     assertEquals("old; detail", s.editableText());
-    assertEquals("Задача: Routine", s.activePart().valueLabel());
+    assertEquals("Routine", s.activePart().valueLabel());
     assertEquals(doc.text, save(s, doc));
     s.edit("changed");
     s.edit("old; detail");

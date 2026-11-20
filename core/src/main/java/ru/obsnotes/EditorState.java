@@ -247,7 +247,7 @@ public final class EditorState {
   public String valueLabel() {
     return !fieldPrefix.isEmpty()
         ? protectedFieldName() + "::"
-        : taskShell.isEmpty() ? "" : "Задача: " + new TaskValue(taskShell, "").label();
+        : taskShell.isEmpty() ? "" : new TaskValue(taskShell, "").label();
   }
 
   public void removeValueTarget() {
