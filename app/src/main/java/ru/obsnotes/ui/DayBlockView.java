@@ -14,7 +14,8 @@ final class DayBlockView {
       LinearLayout parent,
       DayContentRules.Item item,
       Set<String> expanded,
-      DayScreen.Actions actions) {
+      DayScreen.Actions actions,
+      boolean searchMatch) {
     Markdown.Block block = item.original();
     String text = item.view().text();
     boolean projection = item.projection();
@@ -78,7 +79,7 @@ final class DayBlockView {
       }
     } else {
       String key = block.section().heading() + ":" + block.start() + ":" + projection;
-      boolean open = expanded.contains(key);
+      boolean open = searchMatch || expanded.contains(key);
       LinearLayout row = ui.row();
       TextView full =
           ui.text(text + (projection ? "\n↳ " + block.section().title() : ""), 16, Ui.INK);

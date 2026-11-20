@@ -2,13 +2,24 @@ package ru.obsnotes;
 
 import java.util.*;
 
-/** Name matches retain complete sections; content matches retain only matching field/task lines. */
+/**
+ * Match section titles, structured values and visible note text; preserve original source ranges.
+ */
 public final class DaySearch {
-  private record Line(
-      DayContentRules.Item item, MarkdownLines.Line line, String label, boolean counted) {}
+  private record Entry(
+      DayContentRules.Item item, MarkdownLines.Line line, String label, boolean counted) {
+    boolean block() {
+      return line == null;
+    }
+  }
+
+  private static final class Selected {
+    final List<MarkdownLines.Line> lines = new ArrayList<>();
+    boolean block, counted;
+  }
 
   private record Node(
-      DayOutline.Section section, String label, List<Line> lines, List<Node> children) {}
+      DayOutline.Section section, String label, List<Entry> entries, List<Node> children) {}
 
   private record Hit(DayOutline.Section section, int rank) {}
 
@@ -16,24 +27,25 @@ public final class DaySearch {
   private final List<Node> roots;
   private final Set<String> allHeadings;
 
-  public record Result(List<DayOutline.Section> sections, Set<String> fullHeadings) {}
+  public record Result(
+      List<DayOutline.Section> sections,
+      Set<String> fullHeadings,
+      Set<DayContentRules.Item> textMatches) {}
 
-  public DaySearch(List<DayOutline.Section> outline, Routing.Catalog catalog) {
-    this(outline, catalog, DayContentRules.EMPTY);
+  public DaySearch(List<DayOutline.Section> outline) {
+    this(outline, DayContentRules.EMPTY);
   }
 
-  public DaySearch(
-      List<DayOutline.Section> outline, Routing.Catalog catalog, DayContentRules rules) {
+  public DaySearch(List<DayOutline.Section> outline, DayContentRules rules) {
     original = outline;
-    roots = outline.stream().map(s -> index(s, catalog, rules)).toList();
+    roots = outline.stream().map(s -> index(s, rules)).toList();
     Set<String> headings = new LinkedHashSet<>();
     for (var section : outline) includeWhole(section, headings);
     allHeadings = Set.copyOf(headings);
   }
 
-  private static Node index(
-      DayOutline.Section section, Routing.Catalog catalog, DayContentRules rules) {
-    List<Line> lines = new ArrayList<>();
+  private static Node index(DayOutline.Section section, DayContentRules rules) {
+    List<Entry> entries = new ArrayList<>();
     for (var item : section.items()) {
       for (var line : item.view().lines()) {
         if (line.literal()) continue;
@@ -44,14 +56,16 @@ public final class DaySearch {
           String task = new DiaryTasks.Task(0, line.text(), false).label();
           label = task + "\n" + task.split(";", 2)[0].strip();
         }
-        if (label != null) lines.add(new Line(item, line, label, rules.countable(line.text())));
+        if (label != null) entries.add(new Entry(item, line, label, rules.countable(line.text())));
       }
+      String body = textLabel(item);
+      if (!body.isBlank()) entries.add(new Entry(item, null, body, item.view().counted()));
     }
     return new Node(
         section,
-        catalog.sectionIdentityLabel(section.heading()),
-        List.copyOf(lines),
-        section.children().stream().map(s -> index(s, catalog, rules)).toList());
+        section.title(),
+        List.copyOf(entries),
+        section.children().stream().map(s -> index(s, rules)).toList());
   }
 
   public List<DayOutline.Section> find(String query) {
@@ -59,10 +73,24 @@ public final class DaySearch {
   }
 
   public Result result(String query) {
-    if (query.isBlank()) return new Result(original, allHeadings);
+    if (query.isBlank()) return new Result(original, allHeadings, Set.of());
     Set<String> full = new LinkedHashSet<>();
-    var sections = filtered(roots, query, full).stream().map(Hit::section).toList();
-    return new Result(sections, Set.copyOf(full));
+    Set<DayContentRules.Item> text = new LinkedHashSet<>();
+    var sections = filtered(roots, query, full, text).stream().map(Hit::section).toList();
+    return new Result(sections, Set.copyOf(full), Set.copyOf(text));
+  }
+
+  /** One visible block is one field; line breaks inside it do not split the search term. */
+  private static String textLabel(DayContentRules.Item item) {
+    String body = CrossReferences.clean(item.view().raw());
+    List<String> lines = new ArrayList<>();
+    for (var line : MarkdownLines.scan(body)) {
+      if (line.literal() || line.text().isBlank()) continue;
+      if (Markdown.FIELD.matcher(line.text()).matches() || DiaryTasks.isDiary(line.text()))
+        continue;
+      lines.add(line.text());
+    }
+    return String.join(" ", lines).strip();
   }
 
   private static void includeWhole(DayOutline.Section section, Set<String> headings) {
@@ -78,7 +106,9 @@ public final class DaySearch {
     for (var field : fields) offsets.add(field.start());
     List<DayContentRules.Item> result = new ArrayList<>();
     for (var item : items) {
-      if (item.projection()) {
+      if (item.projection()
+          || item.view().lines().stream()
+              .noneMatch(line -> offsets.contains(item.original().start() + line.start()))) {
         result.add(item);
         continue;
       }
@@ -98,31 +128,38 @@ public final class DaySearch {
     return List.copyOf(result);
   }
 
-  private static List<Hit> filtered(List<Node> nodes, String query, Set<String> full) {
+  private static List<Hit> filtered(
+      List<Node> nodes, String query, Set<String> full, Set<DayContentRules.Item> text) {
     List<Hit> hits = new ArrayList<>();
     for (Node node : nodes) {
       int nameRank = FuzzySearch.rank(node.label(), query);
       int rank = nameRank;
-      var lines = FuzzySearch.ranked(node.lines(), query, Line::label);
-      Map<DayContentRules.Item, List<MarkdownLines.Line>> grouped = new LinkedHashMap<>();
-      for (Line line : lines) {
-        rank = Math.min(rank, FuzzySearch.rank(line.label(), query));
-        grouped.computeIfAbsent(line.item(), ignored -> new ArrayList<>()).add(line.line());
+      var entries = FuzzySearch.ranked(node.entries(), query, Entry::label);
+      Map<DayContentRules.Item, Selected> grouped = new LinkedHashMap<>();
+      for (Entry entry : entries) {
+        rank = Math.min(rank, FuzzySearch.rank(entry.label(), query));
+        Selected selected = grouped.computeIfAbsent(entry.item(), ignored -> new Selected());
+        selected.counted |= entry.counted();
+        if (entry.block()) {
+          selected.block = true;
+          text.add(entry.item());
+        } else selected.lines.add(entry.line());
       }
       List<DayContentRules.Item> items = new ArrayList<>();
       for (var entry : grouped.entrySet()) {
         var item = entry.getKey();
-        var visible = entry.getValue();
+        var selected = entry.getValue();
+        if (selected.block) {
+          items.add(item);
+          continue;
+        }
+        var visible = List.copyOf(selected.lines);
         String raw = String.join("\n", visible.stream().map(MarkdownLines.Line::text).toList());
         var view =
-            new DayContentRules.View(
-                List.copyOf(visible),
-                raw,
-                CrossReferences.clean(raw),
-                lines.stream().anyMatch(l -> l.item().equals(item) && l.counted()));
+            new DayContentRules.View(visible, raw, CrossReferences.clean(raw), selected.counted);
         items.add(new DayContentRules.Item(item.original(), item.projection(), view));
       }
-      var children = filtered(node.children(), query, full);
+      var children = filtered(node.children(), query, full, text);
       for (var child : children) rank = Math.min(rank, child.rank());
       if (rank == Integer.MAX_VALUE) continue;
       var s = node.section();

@@ -114,17 +114,6 @@ public final class Routing {
     /**
      * Search names, aliases, field keys/current values and diary tasks, without ordinary note text.
      */
-    public String sectionIdentityLabel(String heading) {
-      return choices.stream()
-          .filter(
-              c ->
-                  c.target().kind() == Markdown.Kind.SECTION
-                      && c.target().heading().equals(heading))
-          .findFirst()
-          .map(this::searchLabel)
-          .orElse(heading);
-    }
-
     public String sectionSearchLabel(String heading) {
       return sectionLabels.getOrDefault(heading, heading);
     }

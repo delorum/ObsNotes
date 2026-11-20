@@ -23,7 +23,7 @@ public class DaySearchTreeTest {
               + "Other:: elsewhere\n");
 
   private static List<DayOutline.Section> find(Markdown doc, String query) {
-    return new DaySearch(DayOutline.sections(doc, doc), new Routing.Catalog(doc, doc)).find(query);
+    return new DaySearch(DayOutline.sections(doc, doc)).find(query);
   }
 
   @Test
@@ -75,7 +75,7 @@ public class DaySearchTreeTest {
   @Test
   public void clearingRestoresOriginalTreeAndCountsWithoutMutatingIt() {
     var roots = DayOutline.sections(DOC, DOC);
-    var search = new DaySearch(roots, new Routing.Catalog(DOC, DOC));
+    var search = new DaySearch(roots);
     search.find("RiverWalk");
     assertSame(roots, search.find(""));
     assertEquals(2, roots.get(1).children().size());
@@ -83,7 +83,7 @@ public class DaySearchTreeTest {
   }
 
   @Test
-  public void codeFrontmatterOrdinaryTextCiphertextAndHiddenHintsDoNotMatch() {
+  public void codeFrontmatterCiphertextAndHiddenHintsDoNotMatch() {
     var doc =
         new Markdown(
             "---\n"
@@ -97,15 +97,13 @@ public class DaySearchTreeTest {
                 + "Hint:: HiddenOnly\n\n"
                 + "Closed:: `secret QUJDREVGR0hJSktMTU5P`\n");
     var rules = new DayContentRules(List.of("Hint:: HiddenOnly"), List.of());
-    var search =
-        new DaySearch(DayOutline.sections(doc, doc, rules), new Routing.Catalog(doc, doc), rules);
-    for (String query :
-        List.of("YamlOnly", "CodeOnly", "OrdinaryOnly", "HiddenOnly", "QUJDREVGR0hJSktMTU5P"))
+    var search = new DaySearch(DayOutline.sections(doc, doc, rules), rules);
+    for (String query : List.of("YamlOnly", "CodeOnly", "HiddenOnly", "QUJDREVGR0hJSktMTU5P"))
       assertTrue(query, search.find(query).isEmpty());
   }
 
   @Test
-  public void aliasMatchKeepsCorrectNestedBranchAndSiblingMatchesAreIndependentlyPruned() {
+  public void namesKeepCorrectNestedBranchAndAliasesAreNotSearchTerms() {
     var doc =
         new Markdown(
             "## Parent\n"
@@ -115,7 +113,8 @@ public class DaySearchTreeTest {
                 + "```\n\n"
                 + "### Two\n"
                 + "Key:: foo\n");
-    var s = find(doc, "spcfcls").get(0);
+    assertTrue(find(doc, "spcfcls").isEmpty());
+    var s = find(doc, "One").get(0);
     assertEquals(1, s.children().size());
     assertEquals("### One", s.children().get(0).heading());
     assertTrue(s.children().get(0).items().isEmpty());
@@ -140,15 +139,12 @@ public class DaySearchTreeTest {
                 + "- [ ] #task/diary/fact OtherTask\n");
     var rules = new DayContentRules(List.of("Key:: HiddenNeedle"), List.of());
     var catalog = new Routing.Catalog(doc, doc);
-    var section =
-        new DaySearch(DayOutline.sections(doc, doc, rules), catalog, rules).find("Key").get(0);
+    var section = new DaySearch(DayOutline.sections(doc, doc, rules), rules).find("Key").get(0);
     var fields = catalog.matchingFields(section, "Key");
     assertEquals(1, fields.size());
     assertEquals("VisibleNeedle", fields.get(0).value());
     section =
-        new DaySearch(DayOutline.sections(doc, doc, rules), catalog, rules)
-            .find("VisibleNeedle")
-            .get(0);
+        new DaySearch(DayOutline.sections(doc, doc, rules), rules).find("VisibleNeedle").get(0);
     fields = catalog.matchingFields(section, "VisibleNeedle");
     var items = DaySearch.withoutFields(section.items(), fields);
     assertEquals(1, items.size());
@@ -168,7 +164,7 @@ public class DaySearchTreeTest {
                 + "- [x] #task/dairy/fact Барабан; осмотрен ✅ 2001-02-03\n"
                 + "Metric:: ab\nOther:: cd\n## Заказ\nSummary:: Filled\n");
     var catalog = new Routing.Catalog(doc, doc);
-    var search = new DaySearch(DayOutline.sections(doc, doc), catalog);
+    var search = new DaySearch(DayOutline.sections(doc, doc));
     var hits = search.find("за ");
     assertEquals(1, hits.size());
     assertEquals("## Заказ", hits.get(0).heading());
@@ -198,7 +194,7 @@ public class DaySearchTreeTest {
                 + "## Other\n"
                 + "Hidden by search\n");
     var outline = DayOutline.sections(doc, doc);
-    var search = new DaySearch(outline, new Routing.Catalog(doc, doc));
+    var search = new DaySearch(outline);
     var original =
         outline.stream().filter(x -> x.heading().equals("## Лада")).findFirst().orElseThrow();
     for (String query : List.of("Лада", "лад", "лд ")) {
@@ -232,7 +228,7 @@ public class DaySearchTreeTest {
         new Markdown(
             "## Family\nParent entry\n\n### Лада\nPersonal entry\n\n"
                 + "#### Details\nChild entry\n\n### Sibling\nSibling entry\n");
-    var search = new DaySearch(DayOutline.sections(doc, doc), new Routing.Catalog(doc, doc));
+    var search = new DaySearch(DayOutline.sections(doc, doc));
     var result = search.result("лд");
     var parent = result.sections().get(0);
     assertEquals("## Family", parent.heading());
@@ -251,7 +247,7 @@ public class DaySearchTreeTest {
             "## River\nOrdinary entry\n\nField:: unrelated\n"
                 + "## Parent\nUnmatched parent entry\n\n### Leaf\nField:: River\nOther:: ignore\n"
                 + "- [ ] #task/diary/fact River task\n- [ ] #task/diary/fact Ignore task\n");
-    var search = new DaySearch(DayOutline.sections(doc, doc), new Routing.Catalog(doc, doc));
+    var search = new DaySearch(DayOutline.sections(doc, doc));
     var result = search.result("River");
     assertEquals(2, result.sections().size());
     assertEquals(Set.of("## River"), result.fullHeadings());
@@ -275,7 +271,7 @@ public class DaySearchTreeTest {
   }
 
   @Test
-  public void fullAliasMatchRespectsHiddenSectionsAndExcludedPlaceholders() {
+  public void fullNameMatchRespectsHiddenSectionsAndExcludedPlaceholders() {
     var doc =
         new Markdown(
             "## Parent\n"
@@ -290,8 +286,9 @@ public class DaySearchTreeTest {
     var rules = new DayContentRules(List.of("HiddenPlaceholder"), List.of());
     var visibility = new HiddenSections(doc, doc, Set.of("#### Hidden"));
     var outline = visibility.outline(DayOutline.sections(doc, doc, rules));
-    var search = new DaySearch(outline, new Routing.Catalog(doc, doc), rules);
-    var result = search.result("spclls");
+    var search = new DaySearch(outline, rules);
+    assertTrue(search.find("spclls").isEmpty());
+    var result = search.result("vsbl");
     var section = result.sections().get(0).children().get(0);
     assertEquals("Visible entry", section.items().get(0).view().text());
     assertTrue(section.children().isEmpty());
@@ -315,8 +312,9 @@ public class DaySearchTreeTest {
             "## Inbox\nShared entry #crossPeople/TargetAlias\n\n"
                 + "## Target\nLocal entry\n\n`secret QUJDREVGR0hJSktMTU5P`\n");
     var outline = DayOutline.sections(doc, template);
-    var search = new DaySearch(outline, new Routing.Catalog(doc, template));
-    var result = search.result("trgtls");
+    var search = new DaySearch(outline);
+    assertTrue(search.find("trgtls").isEmpty());
+    var result = search.result("trgt");
     assertEquals(1, result.sections().size());
     var full = result.sections().get(0);
     assertEquals("## Target", full.heading());

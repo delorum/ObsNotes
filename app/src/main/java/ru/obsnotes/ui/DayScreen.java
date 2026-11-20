@@ -100,7 +100,7 @@ public final class DayScreen {
     }
     var outline = visibility.outline(DayOutline.sections(document, template, rules));
     var catalog = new Routing.Catalog(document, template);
-    DaySearch index = new DaySearch(outline, catalog, rules);
+    DaySearch index = new DaySearch(outline, rules);
     EditText search = ui.searchField(ui.body, "Поиск разделов", query, expanded::clear);
     search.setTag("section-search");
     search.setContentDescription("Поиск разделов");
@@ -149,7 +149,8 @@ public final class DayScreen {
                 reveal,
                 catalog,
                 search.getText().toString(),
-                found.fullHeadings());
+                found.fullHeadings(),
+                found.textMatches());
           if (results.getChildCount() == 0)
             results.addView(ui.text("Разделы не найдены", 14, Ui.MUTED));
         };
@@ -182,7 +183,8 @@ public final class DayScreen {
       Consumer<String> reveal,
       Routing.Catalog catalog,
       String query,
-      Set<String> fullHeadings) {
+      Set<String> fullHeadings,
+      Set<DayContentRules.Item> textMatches) {
     String heading = section.heading();
     // Search can match a parent and its child; render each visible heading once.
     if (headers.containsKey(heading)) return;
@@ -190,7 +192,14 @@ public final class DayScreen {
     headers.put(heading, card);
     boolean open = !query.isBlank() || expanded.contains(heading);
     boolean whole = query.isBlank() || fullHeadings.contains(heading);
-    var fields = catalog.matchingFields(section, whole ? "" : query);
+    var fields =
+        catalog.matchingFields(section, whole ? "" : query).stream()
+            .filter(
+                field ->
+                    textMatches.stream()
+                        .noneMatch(
+                            item -> !item.projection() && item.original().equals(field.block())))
+            .toList();
     var items = DaySearch.withoutFields(section.items(), fields);
     boolean[] populated = {false};
     Runnable populate =
@@ -199,7 +208,8 @@ public final class DayScreen {
           populated[0] = true;
           if (whole && heading.equals("## Чеклист"))
             ChecklistTable.add(ui, content, actions, reveal);
-          for (var item : items) DayBlockView.add(ui, content, item, expanded, actions);
+          for (var item : items)
+            DayBlockView.add(ui, content, item, expanded, actions, textMatches.contains(item));
           for (var child : section.children())
             section(
                 ui,
@@ -211,7 +221,8 @@ public final class DayScreen {
                 reveal,
                 catalog,
                 query,
-                fullHeadings);
+                fullHeadings,
+                textMatches);
           if (whole
               && section.items().isEmpty()
               && section.children().isEmpty()
