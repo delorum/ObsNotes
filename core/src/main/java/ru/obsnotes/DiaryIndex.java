@@ -83,7 +83,8 @@ public final class DiaryIndex {
     for (var b : document.blocks) {
       if (b.start() == exceptStart) continue;
       String id = Events.rootId(b.text());
-      if (!id.isEmpty() || !b.text().contains("#^") && !b.text().contains("```")) {
+      // A candidate may already have parents: promotion creates an intermediate root.
+      if (!id.isEmpty() || !b.text().contains("```")) {
         var root = new Events.Root(path, b, id);
         if (!root.visibleText(rules).isBlank()) list.add(root);
       }
