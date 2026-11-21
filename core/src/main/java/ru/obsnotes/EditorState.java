@@ -165,7 +165,7 @@ public final class EditorState {
       String path, Markdown source, Markdown template, Markdown.Block block) {
     if (!source.blocks.contains(block))
       throw new IllegalArgumentException("Текстовый блок изменился");
-    if (!block.text().contains("\n") && DiaryTasks.isDiary(block.text()))
+    if (!block.text().contains("\n") && DiaryTasks.isSupported(block.text()))
       return editTask(
           path, source, template, new DiaryTasks.Task(block.start(), block.text(), false));
     EditorState state = at(path, source, block.section().heading());
@@ -335,7 +335,7 @@ public final class EditorState {
     if (kind != Markdown.Kind.TASK) {
       appendTaskText = true;
       taskAppend = false;
-    } else if (!DiaryTasks.isDiary(target.source())) {
+    } else if (!DiaryTasks.isSupported(target.source())) {
       taskAppend = false;
     }
   }
@@ -852,7 +852,7 @@ public final class EditorState {
   }
 
   public Markdown.Block originalBlock(Markdown document) {
-    if (DiaryTasks.isDiary(original) && start >= 0 && end == start + original.length()) {
+    if (DiaryTasks.isSupported(original) && start >= 0 && end == start + original.length()) {
       var task =
           DiaryTasks.in(document.text, 0).stream()
               .filter(t -> t.start() == start && t.source().equals(original))

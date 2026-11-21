@@ -12,7 +12,7 @@ public final class Routing {
         var m = Markdown.FIELD.matcher(target.source());
         if (m.matches()) return m.group(1);
       }
-      if (target.kind() == Markdown.Kind.TASK && DiaryTasks.isDiary(target.source()))
+      if (target.kind() == Markdown.Kind.TASK && DiaryTasks.isSupported(target.source()))
         return new DiaryTasks.Task(target.line(), target.source(), false).label();
       if (target.kind() == Markdown.Kind.TASK)
         return target

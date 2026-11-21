@@ -1,4 +1,4 @@
-// Read-only parity check against diaryCleanUtils, plus ObsNotes-only empty prompt values.
+// Read-only parity against diaryCleanUtils, with explicit UI task and empty-value overrides.
 // Usage: OBSNOTES_CONTENT_CHECK_CP=... node tools/check-day-content.cjs /path/to/vault
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -19,20 +19,24 @@ const prompts = ['Погода:: Заполни тестовое значени�
   'ShortDescrWeek:: Заполни тестовое описание!', 'ShortDescrMonth:: Заполни тестовое описание!'];
 const cases = [...js.excludeLines, ...js.excludeContains.map(s => 'prefix ' + s + ' suffix'),
   '- [ ] #task/dairy/fact action', '- [x] #task/dairy/fact action',
+  '- [ ] Plain fact', '- [x] Plain fact', '- [ ] #task/other Foreign fact',
   '- [x] #task/dairy/car Не ездил на машине ✅ 2026-11-16',
   '- [x] #task/dairy/diet не соблюдал диету ✅ 2026-11-16',
   '- [x] #task/dairy/car Ездил на машине ✅ 2026-11-16',
   'Вес::', 'Вес:: 90', 'ФотоПогоды::', 'ShortDescr::', 'ShortDescrWeek::',
   'ShortDescrMonth::', 'ShortDescrYear::', ...prompts, 'ordinary note'];
+const taskTag = /(?:^|\s)#task(?:\/[^\s]+)?(?=\s|$)/;
+const diaryTag = /(?:^|\s)#task\/(?:diary|dairy)(?:\/[\p{L}\d_-]+)*(?=\s|$)/u;
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'obsnotes-content-parity-'));
 try {
   const input = path.join(temp, 'cases.txt');
   fs.writeFileSync(input, cases.map(s => Buffer.from(s).toString('base64')).join('\n'));
   const native = java(input).trim().split('\n').map(line => line.split('\t'));
   for (let i = 0; i < cases.length; i++) {
-    const expectedHidden = js.excludeLines.includes(cases[i]) || js.excludeContains.some(s => cases[i].includes(s));
+    const supportedTask = /^\s*- \[[ xX]\].*/.test(cases[i]) && (diaryTag.test(cases[i]) || !taskTag.test(cases[i]));
+    const expectedHidden = (js.excludeLines.includes(cases[i]) || js.excludeContains.some(s => cases[i].includes(s))) && !supportedTask;
     assert.equal(native[i][0], String(expectedHidden), `hide case ${i}`);
-    assert.equal(native[i][1], String(prompts.includes(cases[i]) ? false : !js.shouldCleanLine(cases[i])), `count case ${i}`);
+    assert.equal(native[i][1], String(prompts.includes(cases[i]) || (supportedTask && /^\s*- \[ \]/.test(cases[i])) ? false : !js.shouldCleanLine(cases[i])), `count case ${i}`);
   }
-  console.log(`Parity passed: ${js.excludeLines.length} excluded lines, ${js.excludeContains.length} substring rules, ${cases.length} counter cases (including ${prompts.length} ObsNotes prompt overrides).`);
+  console.log(`Parity passed: ${js.excludeLines.length} excluded lines, ${js.excludeContains.length} substring rules, ${cases.length} counter cases (including ${prompts.length} prompt overrides and actionable-task visibility).`);
 } finally { fs.rmSync(temp, {recursive: true}); }

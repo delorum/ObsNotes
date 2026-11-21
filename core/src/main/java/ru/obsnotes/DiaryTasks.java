@@ -4,12 +4,13 @@ import java.time.*;
 import java.util.*;
 import java.util.regex.*;
 
-/** diary is the UI spelling; dairy is the existing vault's historical tag spelling. */
+/** Daily facts include ordinary checkboxes and the vault's diary/dairy task tags. */
 public final class DiaryTasks {
   private DiaryTasks() {}
 
   private static final Pattern TAG =
       Pattern.compile("(?:^|\\s)#task/(?:diary|dairy)(?:/[\\p{L}\\d_-]+)*(?=\\s|$)");
+  private static final Pattern TASK_TAG = Pattern.compile("(?:^|\\s)#task(?:/[^\\s]+)?(?=\\s|$)");
   private static final Pattern DONE = Pattern.compile("[ \\t]*✅[ \\t]*\\d{4}-\\d{2}-\\d{2}");
   private static final Pattern ANCHOR = Pattern.compile("([ \\t]+\\^[A-Za-z0-9_-]+[ \\t]*)$");
 
@@ -24,10 +25,18 @@ public final class DiaryTasks {
     return Markdown.TASK.matcher(line).matches() && TAG.matcher(line).find();
   }
 
+  /**
+   * Foreign task categories retain their existing behavior; untagged checkboxes are daily facts.
+   */
+  public static boolean isSupported(String line) {
+    return Markdown.TASK.matcher(line).matches()
+        && (TAG.matcher(line).find() || !TASK_TAG.matcher(line).find());
+  }
+
   public static List<Task> in(String text, int base) {
     List<Task> result = new ArrayList<>();
     for (var line : MarkdownLines.scan(text))
-      if (!line.literal() && isDiary(line.text()))
+      if (!line.literal() && isSupported(line.text()))
         result.add(
             new Task(base + line.start(), line.text(), !line.text().matches("^\\s*- \\[ \\].*")));
     return List.copyOf(result);

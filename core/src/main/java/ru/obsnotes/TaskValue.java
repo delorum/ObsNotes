@@ -5,7 +5,7 @@ import java.time.LocalDate;
 /** A diary task's fixed title and status stay outside its editable, semicolon-delimited value. */
 public record TaskValue(String shell, String value) {
   public static TaskValue parse(String source) {
-    if (!DiaryTasks.isDiary(source)) throw new IllegalArgumentException("Неизвестная задача");
+    if (!DiaryTasks.isSupported(source)) throw new IllegalArgumentException("Неизвестная задача");
     String plain = DiaryTasks.withoutDone(source);
     var anchor =
         java.util.regex.Pattern.compile("([ \\t]+\\^[A-Za-z0-9_-]+[ \\t]*)$").matcher(plain);

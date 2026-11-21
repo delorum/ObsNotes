@@ -46,7 +46,7 @@ public final class DaySearch {
         var field = Markdown.FIELD.matcher(CrossReferences.clean(line.text()));
         String label = null;
         if (field.matches()) label = field.group(1);
-        else if (DiaryTasks.isDiary(line.text())) {
+        else if (DiaryTasks.isSupported(line.text())) {
           String task = new DiaryTasks.Task(0, line.text(), false).label();
           label = task + "\n" + task.split(";", 2)[0].strip();
         }

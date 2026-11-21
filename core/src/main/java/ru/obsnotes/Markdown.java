@@ -277,7 +277,7 @@ public final class Markdown {
     String line = target.source.replaceFirst("\\[ \\]", "[x]");
     String oldDate = DiaryTasks.doneDate(line);
     LocalDate completion =
-        DiaryTasks.isDiary(line) || oldDate.isEmpty() ? date : LocalDate.parse(oldDate);
+        DiaryTasks.isSupported(line) || oldDate.isEmpty() ? date : LocalDate.parse(oldDate);
     line = DiaryTasks.withoutDone(line);
     if (!value.isBlank() && !line.toLowerCase(Locale.ROOT).contains(value.toLowerCase(Locale.ROOT)))
       line = DiaryTasks.appendBeforeAnchor(line, "; " + value);

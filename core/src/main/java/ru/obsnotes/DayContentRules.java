@@ -39,16 +39,21 @@ public final class DayContentRules {
     }
   }
 
-  public boolean hidden(String line) {
+  public boolean excluded(String line) {
     String raw = line.strip(), clean = CrossReferences.clean(raw);
     return excluded.contains(raw)
         || excluded.contains(clean)
         || contains.stream().anyMatch(part -> raw.contains(part) || clean.contains(part));
   }
 
+  /** Cleanup exclusions do not hide actionable daily checkboxes. */
+  public boolean hidden(String line) {
+    return excluded(line) && !DiaryTasks.isSupported(line);
+  }
+
   public static boolean emptyDiaryTask(String line) {
     String clean = CrossReferences.clean(line).strip();
-    if (!DiaryTasks.isDiary(clean)) return false;
+    if (!DiaryTasks.isSupported(clean)) return false;
     if (clean.startsWith("- [ ]")) return true;
     String normalized = clean.replace("#task/diary", "#task/dairy").replace("- [X]", "- [x]");
     return normalized.startsWith("- [x] #task/dairy/car Не ездил на машине")
@@ -72,7 +77,7 @@ public final class DayContentRules {
 
   public boolean countable(String line) {
     String clean = CrossReferences.clean(line).strip();
-    return !clean.isBlank() && !hidden(line) && !emptyDiaryTask(line) && !emptyDataviewKey(line);
+    return !clean.isBlank() && !excluded(line) && !emptyDiaryTask(line) && !emptyDataviewKey(line);
   }
 
   public record View(List<MarkdownLines.Line> lines, String raw, String text, boolean counted) {}
