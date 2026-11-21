@@ -83,7 +83,10 @@ public final class SectionUsage {
       List<Use> uses = new ArrayList<>();
       for (int i = 0; i < state.parts.parts.size(); i++) {
         EditorState part = state.parts.parts.get(i).form().copy();
-        part.fresh = i == 0 || !part.fieldPrefix.isEmpty() ? state.fresh : true;
+        part.fresh =
+            state.batch != null
+                ? part.origins.isEmpty()
+                : i == 0 || !part.fieldPrefix.isEmpty() ? state.fresh : true;
         uses.addAll(planned(part, template, changes));
       }
       return List.copyOf(new LinkedHashSet<>(uses));

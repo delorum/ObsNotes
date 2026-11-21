@@ -149,6 +149,7 @@ public final class VaultRepository {
       LocalDateTime now,
       CleanupRules rules) {
     if (EditorRevision.unchanged(state, template)) return List.of();
+    if (state.batch != null) return state.batch.plan(state, template, date, now, rules);
     if (state.parts == null && WorkDaily.selected(state)) {
       EditorState physical = WorkDaily.physical(state);
       return plan(
@@ -212,7 +213,10 @@ public final class VaultRepository {
               target.source(),
               target.kind());
     String payload = text;
-    if (state.fresh && state.heading.equals("## Заметки") && state.kind == Markdown.Kind.SECTION) {
+    if (state.fresh
+        && state.origins.isEmpty()
+        && state.heading.equals("## Заметки")
+        && state.kind == Markdown.Kind.SECTION) {
       String stamp = to.timestamp(now);
       Events.Prefix prefix = Events.prefix(state.destinationPath, text);
       payload = prefix.raw() + stamp + prefix.body();

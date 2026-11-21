@@ -28,6 +28,8 @@ public final class EditorState {
   public String initialRevision = "";
   public String partId = UUID.randomUUID().toString();
   public EditorParts parts;
+  public EditorBatch batch;
+  public List<String> origins = List.of();
   public boolean secretOpen, sensitive;
   public String secretBefore = "", secretClear = "";
   public final Set<Events.Parent> removedRoots = new LinkedHashSet<>();
@@ -86,6 +88,7 @@ public final class EditorState {
   public EditorState copy() {
     EditorState s = new EditorState();
     s.partId = partId;
+    s.origins = List.copyOf(origins);
     s.secretOpen = secretOpen;
     s.sensitive = sensitive;
     s.secretBefore = secretBefore;
@@ -129,6 +132,19 @@ public final class EditorState {
   void replaceBody(String body) {
     Parts p = parts();
     text = p.join(secretOpen ? SecretText.opened(body) : SecretText.edit(p.body, body));
+  }
+
+  /** Merging a child with its root retains that root's address and generated callout. */
+  void adoptRoot(EditorState source) {
+    if (Events.rootId(source.text).isEmpty()) return;
+    Parts current = parts(), root = source.parts();
+    if (!current.anchor.isEmpty() && !current.anchor.equals(root.anchor))
+      throw new IllegalArgumentException(
+          "У частей разные якоря. Сначала снимите лишнюю корневую роль");
+    if (!current.callout.isEmpty() && !current.callout.equals(root.callout))
+      throw new IllegalArgumentException(
+          "У частей разные корни. Сначала снимите лишнюю корневую роль");
+    text = new Parts(current.link, current.body, root.anchor, root.callout).join(current.body);
   }
 
   void clearEventMetadata() {

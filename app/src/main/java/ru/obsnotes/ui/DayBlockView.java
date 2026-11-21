@@ -14,12 +14,24 @@ final class DayBlockView {
       LinearLayout parent,
       DayContentRules.Item item,
       Set<String> expanded,
-      DayScreen.Actions actions) {
+      DayScreen.Actions actions,
+      BlockSelection selection,
+      String dailyPath,
+      BlockDrag drag) {
     Markdown.Block block = item.original();
     String text = item.view().text();
     boolean projection = item.projection();
+    String physicalPath = item.path().isEmpty() ? dailyPath : item.path();
+    boolean selected = selection.contains(physicalPath, block);
+    boolean selectable = EditorBatch.selectable(block, !item.path().isEmpty());
     LinearLayout box = ui.column();
     FrameLayout frame = SwipeToDelete.wrap(ui, box);
+    if (selected) {
+      var background = ui.background(Ui.CARD, 10);
+      background.setStroke(ui.dp(1), Ui.INK);
+      box.setBackground(background);
+      frame.setContentDescription("Выбранная запись: " + text.lines().findFirst().orElse(""));
+    }
     List<View> gestures = new ArrayList<>();
     var tasks =
         item.path().isEmpty()
@@ -70,11 +82,6 @@ final class DayBlockView {
         check.setOnClickListener(v -> toggle.run());
         label.setContentDescription("Редактировать задачу: " + task.label());
         label.setOnClickListener(v -> actions.appendTask(task));
-        label.setOnLongClickListener(
-            v -> {
-              actions.edit(block, item.path());
-              return true;
-            });
         box.addView(row);
         gestures.add(check);
         gestures.add(label);
@@ -86,15 +93,21 @@ final class DayBlockView {
       LinearLayout row = ui.row();
       TextView full =
           ui.text(text + (projection ? "\n↳ " + block.section().title() : ""), 16, Ui.INK);
-      full.setTextIsSelectable(true);
+      full.setTextIsSelectable(false);
       full.setVisibility(open ? View.VISIBLE : View.GONE);
       var expand =
           ui.icon(
-              open ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right,
-              "Развернуть текстовый блок",
+              selected
+                  ? ru.obsnotes.R.drawable.ic_task
+                  : open ? ru.obsnotes.R.drawable.ic_down : ru.obsnotes.R.drawable.ic_right,
+              selected ? "Редактировать выбранные записи" : "Развернуть текстовый блок",
               () -> {});
       expand.setOnClickListener(
           v -> {
+            if (selected) {
+              actions.edit(block, item.path());
+              return;
+            }
             boolean visible = full.getVisibility() != View.VISIBLE;
             full.setVisibility(visible ? View.VISIBLE : View.GONE);
             if (visible) expanded.add(key);
@@ -124,7 +137,11 @@ final class DayBlockView {
       gestures.add(full);
     }
     Runnable remove = () -> actions.delete(block, projection, item.path());
-    for (View gesture : gestures) SwipeToDelete.bind(ui, gesture, frame, box, remove);
+    for (View gesture : gestures) {
+      SwipeToDelete.bind(
+          ui, gesture, frame, box, remove, selectable ? () -> actions.select(item) : null);
+      if (selectable) drag.bind(gesture, frame, item);
+    }
     LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
     layout.bottomMargin = ui.dp(8);
     parent.addView(frame, layout);

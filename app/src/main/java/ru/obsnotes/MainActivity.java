@@ -49,6 +49,7 @@ public final class MainActivity extends AppCompatActivity {
   private Markdown template = new Markdown(""), document;
   private DayContentRules contentRules = DayContentRules.EMPTY;
   private EditorState editor;
+  private final BlockSelection selection = new BlockSelection();
   private WorkDaily.Note workNote;
   private String workError;
 
@@ -271,6 +272,7 @@ public final class MainActivity extends AppCompatActivity {
           setWork(loaded.work);
           document = loaded.opened.document();
           path = loaded.opened.path();
+          selection.clear();
           vault = value;
           connected = true;
           index = loaded.index;
@@ -355,6 +357,7 @@ public final class MainActivity extends AppCompatActivity {
                       if (editor != null) recovery.save(editor, vault);
                       editor = null;
                       day = result.view().date();
+                      selection.clear();
                       path = result.view().path();
                       document = result.view().document();
                       contentRules = rules;
@@ -428,6 +431,8 @@ public final class MainActivity extends AppCompatActivity {
             document,
             template,
             workNote,
+            path,
+            selection,
             contentRules,
             hiddenSections(document),
             connected,
@@ -435,6 +440,28 @@ public final class MainActivity extends AppCompatActivity {
             expanded,
             sectionQuery,
             new DayScreen.Actions() {
+              public void select(DayContentRules.Item item) {
+                if (busy) return;
+                String sourcePath = item.path().isEmpty() ? path : item.path();
+                Markdown source = sourcePath.equals(path) ? document : workNote.document();
+                selection.toggle(sourcePath, source, item.original());
+                showDayKeepingPosition();
+              }
+
+              public void selectionView() {
+                selection.onlySelected = !selection.onlySelected;
+                showDayKeepingPosition();
+              }
+
+              public void selectionReset() {
+                selection.clear();
+                showDayKeepingPosition();
+              }
+
+              public void reorder(Markdown.Block from, Markdown.Block to, String sourcePath) {
+                reorderBlocks(from, to, sourcePath);
+              }
+
               public void settings() {
                 if (!busy) showSettings();
               }
@@ -468,6 +495,10 @@ public final class MainActivity extends AppCompatActivity {
               }
 
               public void edit(Markdown.Block block, String sourcePath) {
+                if (!busy && selection.contains(sourcePath.isEmpty() ? path : sourcePath, block)) {
+                  startBatch();
+                  return;
+                }
                 if (!busy)
                   startEditor(
                       block, sourcePath.isEmpty() ? block.section().heading() : WorkDaily.ROUTE);
@@ -623,6 +654,40 @@ public final class MainActivity extends AppCompatActivity {
     editor = null;
     showDay();
     if (connected && document != null && !polling) refreshQuietly();
+  }
+
+  private void startBatch() {
+    if (busy || document == null) return;
+    cancelWeather();
+    cancelNavigation();
+    taskViewport = null;
+    try {
+      Map<String, Markdown> sources = new LinkedHashMap<>();
+      sources.put(path, document);
+      if (workNote != null) sources.put(workNote.path(), workNote.document());
+      editor =
+          EditorBatch.create(path, document, template, workNote, selection.ordered(path, sources));
+      selection.clear();
+      recovery.save(editor, vault);
+      showEditor();
+    } catch (IllegalArgumentException error) {
+      ui.error(error.getMessage());
+    }
+  }
+
+  private void reorderBlocks(Markdown.Block from, Markdown.Block to, String sourcePath) {
+    if (busy || document == null) return;
+    String physicalPath = sourcePath.isEmpty() ? path : sourcePath;
+    Markdown before = physicalPath.equals(path) ? document : workNote.document();
+    BlockOrder.Result[] result = new BlockOrder.Result[1];
+    applyDayChange(
+        physicalPath,
+        before,
+        () -> {
+          result[0] = BlockOrder.move(before, from, to);
+          return result[0].document();
+        },
+        after -> selection.reordered(physicalPath, before, after, result[0].positions()));
   }
 
   private void startEditor(Markdown.Block block, String heading) {
@@ -1213,6 +1278,11 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void applyDayChange(String selectedPath, Markdown before, Work<Markdown> update) {
+    applyDayChange(selectedPath, before, update, after -> {});
+  }
+
+  private void applyDayChange(
+      String selectedPath, Markdown before, Work<Markdown> update, Consumer<Markdown> onApplied) {
     if (busy) return;
     VaultRepository selectedRepository = repository;
     work(
@@ -1226,6 +1296,7 @@ public final class MainActivity extends AppCompatActivity {
           else if (workNote != null && workNote.path().equals(selectedPath))
             workNote = new WorkDaily.Note(selectedPath, after);
           checklistContext = null;
+          onApplied.accept(after);
           showDayKeepingPosition();
         });
   }

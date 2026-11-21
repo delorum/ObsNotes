@@ -29,6 +29,7 @@ public final class EditorRevision {
     for (int i = 0; i < forms.size(); i++) indices.put(forms.get(i).partId, i);
     add(key, forms.size());
     for (EditorState form : forms) {
+      if (!form.origins.isEmpty()) add(key, form.origins);
       add(key, form.destinationPath);
       add(key, form.kind);
       add(key, form.fieldPrefix);

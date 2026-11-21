@@ -18,6 +18,8 @@ public final class EditorRecovery {
       j.put("vault", vault);
       boolean sensitive =
           s.sensitive
+              || s.batch != null
+                  && s.batch.originals.stream().anyMatch(o -> SecretText.has(o.sourceSnapshot))
               || SecretText.has(s.sourceSnapshot)
               || SecretText.has(s.text)
               || s.parts != null
@@ -71,6 +73,12 @@ public final class EditorRecovery {
     for (var edit : s.rootEdits) edits.put(encodeEdit(edit));
     j.put("rootEdits", edits);
     j.put("partId", s.partId);
+    j.put("origins", new JSONArray(s.origins));
+    if (s.batch != null) {
+      JSONArray originals = new JSONArray();
+      for (var original : s.batch.originals) originals.put(encode(original));
+      j.put("batch", originals);
+    }
     j.put("sourcePath", s.sourcePath);
     j.put("destinationPath", s.destinationPath);
     j.put("original", s.original);
@@ -163,6 +171,18 @@ public final class EditorRecovery {
 
   private EditorState decode(JSONObject j) throws JSONException {
     EditorState s = new EditorState();
+    JSONArray origins = j.optJSONArray("origins");
+    if (origins != null) {
+      java.util.List<String> values = new java.util.ArrayList<>();
+      for (int i = 0; i < origins.length(); i++) values.add(origins.getString(i));
+      s.origins = java.util.List.copyOf(values);
+    }
+    JSONArray batch = j.optJSONArray("batch");
+    if (batch != null) {
+      java.util.List<EditorState> originals = new java.util.ArrayList<>();
+      for (int i = 0; i < batch.length(); i++) originals.add(decode(batch.getJSONObject(i)));
+      s.batch = new EditorBatch(originals);
+    }
     s.secretOpen = j.optBoolean("secretOpen");
     s.sensitive = j.optBoolean("sensitive");
     s.secretBefore = j.optString("secretBefore");

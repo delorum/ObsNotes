@@ -67,6 +67,20 @@ public final class EditorParts {
   public void edit(String next) {
     next = next.replace("\r\n", "\n").replace('\r', '\n');
     value = next;
+    // Replacing the whole field must retain the original slots while the IME types them again.
+    if (owner.batch != null && next.isEmpty() && error.isEmpty()) {
+      List<Part> empty = new ArrayList<>();
+      for (var part : parts) {
+        var form = part.form().copy();
+        form.replaceBody("");
+        empty.add(new Part(0, 0, form));
+      }
+      parts.clear();
+      parts.addAll(empty);
+      baseline = "";
+      selected = 0;
+      return;
+    }
     int prefix = 0;
     while (prefix < baseline.length()
         && prefix < next.length()
@@ -82,7 +96,9 @@ public final class EditorParts {
     java.util.function.IntUnaryOperator mapStart = at -> at < p ? at : at >= o ? at + n - o : p;
     java.util.function.ToIntFunction<Part> mappedStart =
         part ->
-            part.start() == part.end() && pinned(part.form())
+            part.start() == part.end()
+                    && (pinned(part.form())
+                        || owner.batch != null && !part.form().origins.isEmpty())
                 ? map.applyAsInt(part.start())
                 : mapStart.applyAsInt(part.start());
     Map<String, Integer> originalOrder = new HashMap<>();
@@ -94,11 +110,17 @@ public final class EditorParts {
                 || prefix < fieldSlots.get(0).end()
                     && oldEnd > fieldSlots.get(fieldSlots.size() - 1).start());
     List<Part> result = new ArrayList<>();
+    Map<String, String> merged = new LinkedHashMap<>();
     Set<EditorState> used = Collections.newSetFromMap(new IdentityHashMap<>());
     try {
       var spans = ranges(next);
       if (next.isBlank() && parts.stream().anyMatch(part -> pinned(part.form())))
         spans = List.of(new int[] {0, 0});
+      boolean replaceBatch =
+          owner.batch != null
+              && spans.size() == parts.size()
+              && prefix <= parts.get(0).start()
+              && oldEnd > parts.get(0).end();
       int slot = 0;
       for (int[] range : spans) {
         List<Part> contributors = new ArrayList<>();
@@ -110,13 +132,21 @@ public final class EditorParts {
           contributors.clear();
           contributors.add(fieldSlots.get(slot));
         }
+        if (replaceBatch && !replaceValues) {
+          contributors.clear();
+          contributors.add(parts.get(slot));
+        }
         slot++;
         boolean inferred = contributors.isEmpty();
         if (contributors.isEmpty()) {
           Part closest = parts.get(0);
-          for (Part old : parts) if (mappedStart.applyAsInt(old) <= range[0]) closest = old;
+          for (Part old : parts)
+            if (mappedStart.applyAsInt(old) <= range[0]
+                && mappedStart.applyAsInt(old) > mappedStart.applyAsInt(closest)) closest = old;
           contributors.add(closest);
         }
+        if (contributors.size() > 1 && contributors.stream().anyMatch(old -> old.form().locked()))
+          throw new IllegalArgumentException("Сначала расшифруйте объединяемые части замком");
         Part origin = contributors.get(0);
         EditorState form = origin.form().copy();
         boolean mappedContent = map.applyAsInt(origin.end()) > mapStart.applyAsInt(origin.start());
@@ -157,11 +187,15 @@ public final class EditorParts {
         for (Part old : contributors) {
           EditorState source = old.form();
           if (old != origin) {
+            merged.put(source.partId, form.partId);
             if (source.valueBound())
               throw new IllegalArgumentException("Поля имеют разные ключи. Верните пустую строку.");
-            if (!Events.id(source.text).isEmpty() || !source.rootLinkLabel().isEmpty())
-              throw new IllegalArgumentException(
-                  "Для объединения частей сначала уберите их связи или верните пустую строку.");
+            if (!Events.id(source.text).isEmpty()) {
+              if (Events.rootId(source.text).isEmpty())
+                throw new IllegalArgumentException(
+                    "Часть с отдельным якорем нельзя объединить без потери адреса");
+              form.adoptRoot(source);
+            }
             for (Routing.Choice route :
                 source.routeChosen ? source.routes : List.<Routing.Choice>of()) {
               if (routes.stream().anyMatch(c -> c.target().equals(route.target()))) continue;
@@ -185,6 +219,8 @@ public final class EditorParts {
             }
           }
         }
+        form.origins =
+            contributors.stream().flatMap(old -> old.form().origins.stream()).distinct().toList();
         String clean = next.substring(range[0], range[1]);
         form.replaceBody(
             TaggedText.parse(clean).withTags(tags.stream().distinct().toList()).render());
@@ -192,7 +228,8 @@ public final class EditorParts {
         result.add(new Part(range[0], range[1], form));
       }
       for (Part old : parts) {
-        if (pinned(old.form())
+        if ((pinned(old.form())
+                || owner.batch != null && old.start() == old.end() && !old.form().origins.isEmpty())
             && result.stream().noneMatch(part -> part.form().partId.equals(old.form().partId))) {
           EditorState empty = old.form().copy();
           empty.replaceBody("");
@@ -220,9 +257,40 @@ public final class EditorParts {
       }
       Set<String> ids = new HashSet<>();
       for (Part part : result) ids.add(part.form().partId);
-      if (links.configured) links.validate(ids);
+      PartLinks changedGraph = effectiveLinks().copy();
+      if (!merged.isEmpty()) {
+        PartLinks remapped = new PartLinks();
+        remapped.configured = changedGraph.configured;
+        for (String root : changedGraph.rootIds())
+          remapped.roots.add(merged.getOrDefault(root, root));
+        for (String child : changedGraph.children()) {
+          String actual = merged.getOrDefault(child, child);
+          List<EventLink> refs = new ArrayList<>(remapped.refs(actual));
+          for (var ref : changedGraph.refs(child)) {
+            var mapped =
+                ref.local()
+                    ? new EventLink(
+                        ref.key(),
+                        merged.getOrDefault(ref.part(), ref.part()),
+                        ref.path(),
+                        ref.id(),
+                        ref.label(),
+                        ref.raw(),
+                        ref.edit())
+                    : ref;
+            if (mapped.local() && mapped.part().equals(actual)) continue;
+            if (refs.stream().noneMatch(old -> old.identity().equals(mapped.identity())))
+              refs.add(mapped);
+          }
+          remapped.set(actual, refs);
+        }
+        changedGraph = remapped;
+      }
+      if (changedGraph.configured) changedGraph.validate(ids);
+      if (!merged.isEmpty()) links.assign(changedGraph);
       parts.clear();
       parts.addAll(result);
+      if (!merged.isEmpty()) syncRawLinks();
       baseline = next;
       selected = Math.min(selected, parts.size() - 1);
       error = "";
@@ -382,6 +450,15 @@ public final class EditorParts {
   }
 
   public void addExternal(int index, Events.Root root, String snapshot, String replacing) {
+    if (owner.batch != null) {
+      for (int i = 0; i < parts.size(); i++) {
+        var candidate = parts.get(i).form();
+        if (candidate.sourcePath.equals(root.path()) && candidate.start == root.block().start()) {
+          addInternal(index, i, replacing);
+          return;
+        }
+      }
+    }
     EditorState form = parts.get(index).form();
     String replacement = "";
     EventLink.RootEdit edit = null;
@@ -532,7 +609,8 @@ public final class EditorParts {
         && effectiveLinks().involved(form.partId)
         && !WorkDaily.selected(form))
       return "Сначала уберите связи этой части перед переносом в работу";
-    if (effectiveLinks().involved(form.partId)
+    if ((effectiveLinks().involved(form.partId)
+            || owner.batch != null && !Events.id(form.text).isEmpty())
         && !choices.isEmpty()
         && choices.get(0).target().kind() != Markdown.Kind.SECTION)
       return "Сначала уберите связь этой части: задачи и Dataview-ключи не поддерживают связи";
@@ -559,7 +637,7 @@ public final class EditorParts {
     return edits;
   }
 
-  private List<EditorState> savedForms() {
+  List<EditorState> savedForms() {
     List<EditorState> forms = parts.stream().map(part -> part.form().copy()).toList();
     PartLinks graph = effectiveLinks();
     Map<String, Events.Root> roots = new HashMap<>();

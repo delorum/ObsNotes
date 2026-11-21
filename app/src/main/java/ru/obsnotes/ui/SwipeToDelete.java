@@ -25,27 +25,44 @@ public final class SwipeToDelete {
   // Normal taps retain View.onTouchEvent/performClick; only swipes are consumed here.
   @android.annotation.SuppressLint("ClickableViewAccessibility")
   public static void bind(Ui ui, View touch, FrameLayout frame, View content, Runnable remove) {
+    bind(ui, touch, frame, content, remove, null);
+  }
+
+  @android.annotation.SuppressLint("ClickableViewAccessibility")
+  public static void bind(
+      Ui ui, View touch, FrameLayout frame, View content, Runnable remove, Runnable select) {
     int slop = ViewConfiguration.get(ui.activity).getScaledTouchSlop();
-    LeftSwipe swipe = new LeftSwipe(slop, ui.dp(64));
+    LeftSwipe swipe = new LeftSwipe(slop, ui.dp(64)), right = new LeftSwipe(slop, ui.dp(64));
     touch.setOnTouchListener(
         new View.OnTouchListener() {
-          boolean horizontal;
+          boolean horizontal, selecting;
 
           public boolean onTouch(View view, android.view.MotionEvent event) {
             switch (event.getActionMasked()) {
               case MotionEvent.ACTION_DOWN:
                 swipe.down(event.getRawX(), event.getRawY());
-                horizontal = false;
+                right.down(-event.getRawX(), event.getRawY());
+                horizontal = selecting = false;
                 break;
               case MotionEvent.ACTION_MOVE:
-                if (!horizontal && swipe.move(event.getRawX(), event.getRawY())) {
+                if (!horizontal
+                    && (swipe.move(event.getRawX(), event.getRawY())
+                        || select != null && right.move(-event.getRawX(), event.getRawY()))) {
+                  selecting = swipe.translation() == 0;
                   horizontal = true;
+                  view.cancelLongPress();
                   view.getParent().requestDisallowInterceptTouchEvent(true);
-                  frame.getChildAt(0).setVisibility(View.VISIBLE);
+                  TextView hint = (TextView) frame.getChildAt(0);
+                  hint.setText(selecting ? "Выбрать" : "Удалить");
+                  hint.setTextColor(selecting ? Ui.GREEN : Ui.RED);
+                  hint.setGravity(
+                      (selecting ? Gravity.START : Gravity.END) | Gravity.CENTER_VERTICAL);
+                  hint.setVisibility(View.VISIBLE);
                 }
                 if (horizontal) {
                   swipe.move(event.getRawX(), event.getRawY());
-                  content.setTranslationX(swipe.translation());
+                  right.move(-event.getRawX(), event.getRawY());
+                  content.setTranslationX(selecting ? -right.translation() : swipe.translation());
                   return true;
                 }
                 break;
@@ -53,6 +70,11 @@ public final class SwipeToDelete {
               case MotionEvent.ACTION_CANCEL:
                 content.setTranslationX(0);
                 frame.getChildAt(0).setVisibility(View.INVISIBLE);
+                boolean choose =
+                    right.end(
+                        -event.getRawX(),
+                        event.getRawY(),
+                        event.getActionMasked() == MotionEvent.ACTION_CANCEL);
                 boolean delete =
                     swipe.end(
                         event.getRawX(),
@@ -61,9 +83,10 @@ public final class SwipeToDelete {
                 if (horizontal) {
                   view.setPressed(false);
                   view.getParent().requestDisallowInterceptTouchEvent(false);
-                  if (delete) {
+                  if (selecting ? choose : delete) {
                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM);
-                    remove.run();
+                    if (selecting) select.run();
+                    else remove.run();
                   }
                   return true;
                 }
@@ -71,6 +94,14 @@ public final class SwipeToDelete {
             return false;
           }
         });
+    if (select != null)
+      ViewCompat.addAccessibilityAction(
+          touch,
+          "Выбрать запись",
+          (v, args) -> {
+            select.run();
+            return true;
+          });
     ViewCompat.addAccessibilityAction(
         touch,
         "Удалить запись",
