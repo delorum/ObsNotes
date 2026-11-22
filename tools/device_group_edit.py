@@ -99,7 +99,7 @@ class GroupEditTest(unittest.TestCase):
         self.assertFalse(d.nodes(tree,desc='Настройки'))
         self.assertFalse(d.nodes(tree,desc='Сегодня'))
         title=d.nodes(tree,text='ObsNotes')[0]
-        count=d.nodes(tree,desc='Показать выбранные записи')[0]
+        count=d.nodes(tree,desc='Редактировать выбранные записи')[0]
         reset=d.nodes(tree,desc='Сбросить выбор')[0]
         a,b,c,z=d.bounds(count); x,y,right,bottom=d.bounds(reset)
         self.assertEqual(c-a,right-x)
@@ -107,12 +107,7 @@ class GroupEditTest(unittest.TestCase):
         self.assertEqual(c-a,z-b)
         self.assertGreater(a,d.bounds(title)[2])
         Path('/tmp/obsnotes-selected-toolbar.png').write_bytes(d.adb('exec-out','screencap','-p'))
-        d.tap(d.find(desc='Показать выбранные записи',down=False))
-        tree=d.tree()
-        self.assertTrue(d.nodes(tree,text='One'))
-        self.assertTrue(d.nodes(tree,text='Other'))
-        self.assertFalse(d.nodes(tree,text='Two'))
-        d.tap(d.find(text='One',down=False))
+        d.tap(d.find(desc='Редактировать выбранные записи',down=False))
         d.wait_for(d.keyboard_shown)
         state=d.pending_editor()
         self.assertEqual('One\n\nOther',state['parts']['value'])
@@ -125,8 +120,7 @@ class GroupEditTest(unittest.TestCase):
     def test_2_merge_across_sections_and_preserve_the_unselected_blocks(self):
         self.select('One')
         self.select('Other','Beta')
-        d.tap(d.find(desc='Показать выбранные записи',down=False))
-        d.tap(d.find(text='Other',down=False))
+        d.tap(d.find(desc='Редактировать выбранные записи',down=False))
         d.wait_for(d.keyboard_shown)
         field=e.input_field()
         d.tap(field)
@@ -151,7 +145,10 @@ class GroupEditTest(unittest.TestCase):
         target=d.find(text='Three',down=False)
         x1,y1,x2,y2=d.bounds(source); a,b,c,z=d.bounds(target)
         d.adb('shell','input','draganddrop',str((x1+x2)//2),str((y1+y2)//2),str((a+c)//2),str((b+z)//2),'1200')
-        d.wait_for(lambda: self.note().index('Two') < self.note().index('One'))
+        def reordered():
+            text=self.note()
+            return all(word in text for word in ['One','Two','Three']) and text.index('Two')<text.index('One')
+        d.wait_for(reordered)
         text=self.note()
         alpha=text.split('## Alpha')[1].split('## Beta')[0]
         self.assertLess(alpha.index('Two'),alpha.index('Three'))
@@ -214,7 +211,21 @@ class GroupEditTest(unittest.TestCase):
         self.assertIn('[[#^parent|Parent]]\nMiddle',text)
         print('Phone: existing-parent candidate promotion and chain save passed',flush=True)
 
-    def test_7_selected_only_reset_and_left_swipe_still_requires_confirmation(self):
+    def test_7_taps_toggle_selection_last_tap_exits_and_reset_never_deletes(self):
+        self.select('One')
+        d.tap(d.find(text='Two',down=False))
+        self.assertTrue(d.nodes(d.tree(),text='2'))
+        self.assertFalse(d.nodes(d.tree(),desc='Назад'))
+        d.tap(d.find(text='One',down=False))
+        self.assertTrue(d.nodes(d.tree(),text='1'))
+        d.tap(d.find(text='Two',down=False))
+        self.assertTrue(d.nodes(d.tree(),desc='Настройки'))
+        self.assertFalse(d.nodes(d.tree(),desc='Сбросить выбор'))
+        # Outside selection, an ordinary tap edits a single note again.
+        d.tap(d.find(text='One',down=False))
+        d.wait_for(d.keyboard_shown)
+        self.assertEqual('One',e.input_field().get('text'))
+        self.save()
         self.select('One')
         d.tap(d.find(desc='Сбросить выбор',down=False))
         self.assertTrue(d.nodes(d.tree(),desc='Настройки'))
@@ -235,8 +246,7 @@ class GroupEditTest(unittest.TestCase):
     def test_8_group_recovery_retains_all_originals_and_their_destinations(self):
         self.select('One')
         self.select('Other','Beta')
-        d.tap(d.find(desc='Показать выбранные записи',down=False))
-        d.tap(d.find(text='One',down=False))
+        d.tap(d.find(desc='Редактировать выбранные записи',down=False))
         d.wait_for(d.keyboard_shown)
         v.enter('UpdatedOne\n\nUpdatedOther')
         self.assertEqual(['## Alpha','## Beta'],[part['heading'] for part in d.pending_editor()['parts']['items']])
@@ -267,7 +277,7 @@ class GroupEditTest(unittest.TestCase):
         d.query('Alpha')
         self.assertTrue(d.nodes(d.tree(),desc='Сбросить выбор'))
         self.assertTrue(d.nodes(d.tree(),text='1'))
-        d.tap(d.find(text='One',down=False))
+        d.tap(d.find(desc='Редактировать выбранные записи',down=False))
         d.wait_for(d.keyboard_shown)
         state=d.pending_editor()
         self.assertEqual(1,len(state['batch']))
@@ -285,8 +295,7 @@ class GroupEditTest(unittest.TestCase):
         self.start()
         self.select('ChildTop','Events')
         self.select('RootBody','Events')
-        d.tap(d.find(desc='Показать выбранные записи',down=False))
-        d.tap(d.find(text='ChildTop',down=False))
+        d.tap(d.find(desc='Редактировать выбранные записи',down=False))
         d.wait_for(d.keyboard_shown)
         d.tap(e.input_field())
         d.adb('shell','input','keycombination','113','122')
@@ -341,11 +350,157 @@ class GroupEditTest(unittest.TestCase):
             d.adb('shell','input','motionevent','MOVE',str((tx+tr)//2),str((ty+tb)//2))
             d.adb('shell','input','motionevent','UP',str((tx+tr)//2),str((ty+tb)//2))
             released=True
-            d.wait_for(lambda: self.note().index('DragMe')>self.note().index(f'D{old_last:02}'))
+            def reordered():
+                text=self.note()
+                marker=f'D{old_last:02}'
+                return 'DragMe' in text and marker in text and text.index('DragMe')>text.index(marker)
+            d.wait_for(reordered)
         finally:
             if not released: d.adb('shell','input','motionevent','CANCEL',str(x),str((b+z)//2))
         self.assertIn('Other',self.note())
         print('Phone: drag autoscroll reaches a block below the initial viewport passed',flush=True)
+
+    def test_12_selection_frame_times_and_standard_insets(self):
+        # Geometry comes from the actual controls; no fixed device resolution/density.
+        d.query('Alpha')
+        tree=d.tree()
+        parents={child:parent for parent in tree.iter('node') for child in parent}
+        disclosure=d.nodes(tree,desc='Развернуть раздел Alpha')[0]
+        add=d.nodes(tree,desc='Новая заметка: Alpha')[0]
+        header=parents[disclosure]
+        card=parents[header]
+        left,top,right,bottom=d.bounds(card)
+        x,y,r,b=d.bounds(disclosure)
+        ax,ay,ar,ab=d.bounds(add)
+        density=(r-x)/48
+        self.assertAlmostEqual(10*density,x-left,delta=2)
+        self.assertAlmostEqual(10*density,right-ar,delta=2)
+        self.assertGreaterEqual(y-top,8*density-2)
+        preview=d.nodes(tree,text='One')[0]
+        block_row=parents[preview]
+        block=parents[block_row]
+        block_arrow=next(n for n in block_row if n.get('content-desc')=='Развернуть текстовый блок')
+        self.assertAlmostEqual(10*density,d.bounds(block_arrow)[0]-d.bounds(block)[0],delta=2)
+        self.assertGreaterEqual(d.bounds(block_arrow)[1]-d.bounds(block)[1],8*density-2)
+        original_query=d.nodes(tree,desc='Поиск разделов')[0].get('text')
+        metrics=[]
+        for label in ['One','Two','Three']:
+            source=d.find(text=label,down=False)
+            d.adb('shell','dumpsys','gfxinfo','ru.obsnotes','reset')
+            swipe(source)
+            # Dumpsys captures the actual gesture/layout frames, without the UIAutomator idle wait.
+            raw=d.adb('shell','dumpsys','gfxinfo','ru.obsnotes','framestats').decode()
+            header_names=None
+            durations=[]
+            for line in raw.splitlines():
+                if line.startswith('Flags,'):
+                    header_names=line.strip(',').split(',')
+                elif header_names and re.match(r'^0,',line):
+                    values=line.strip(',').split(',')
+                    row=dict(zip(header_names,values))
+                    start=int(row['IntendedVsync']); end=int(row['FrameCompleted'])
+                    if end>=start and end<2**63-1: durations.append((end-start)/1e6)
+            self.assertTrue(durations,'No completed gesture frames')
+            metrics.append(max(durations))
+            self.assertLess(max(durations),150,'Selection blocks a frame for too long: '+str(durations))
+            current=d.tree()
+            self.assertEqual(original_query,d.nodes(current,desc='Поиск разделов')[0].get('text'))
+            self.assertTrue(d.nodes(current,text='Other')==[])  # Search remains unchanged.
+        self.assertTrue(d.nodes(d.tree(),text='3'))
+        print('Phone: selection max frame times (first/subsequent), ms: '+str(metrics),flush=True)
+        d.tap(d.find(desc='Сбросить выбор',down=False))
+        d.query('NewsEmpty')
+        self.assertTrue(d.nodes(d.tree(),text='Разделы не найдены'))
+        d.query('Fields')
+        Path('/tmp/obsnotes-selection-insets.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        # A dedicated empty nested section proves neither level accumulates horizontal indentation.
+        d.adb('shell','am','force-stop','ru.obsnotes')
+        e.put(self.relative,SOURCE+'\n## EmptyParent\n\n### EmptyChild\n\n')
+        self.start()
+        d.query('EmptyParent')
+        tree=d.tree()
+        parents={child:parent for parent in tree.iter('node') for child in parent}
+        arrows=[d.nodes(tree,desc='Развернуть раздел '+title)[0] for title in ['EmptyParent','EmptyChild']]
+        self.assertEqual(d.bounds(arrows[0])[0],d.bounds(arrows[1])[0])
+        empty=d.nodes(tree,text='Пусто')[0]
+        content=parents[empty]
+        self.assertAlmostEqual(10*density,d.bounds(empty)[0]-d.bounds(content)[0],delta=2)
+        self.assertAlmostEqual(10*density,d.bounds(content)[2]-d.bounds(empty)[2],delta=2)
+        Path('/tmp/obsnotes-empty-insets.png').write_bytes(d.adb('exec-out','screencap','-p'))
+        print('Phone: section/block controls and empty label have standard insets; nested sections align',flush=True)
+
+    def test_13_encrypted_recovery_keeps_latest_text_and_ciphertext_after_restart(self):
+        import device_encryption as secret
+        d.adb('shell','am','force-stop','ru.obsnotes')
+        source=SOURCE.replace('\nOne\n','\nBefore\n`secret '+secret.CIPHER+'`\n')
+        e.put(self.relative,source)
+        self.start()
+        d.query('Alpha')
+        d.tap(d.find(text='Before',down=False))
+        d.wait_for(d.keyboard_shown)
+        d.tap(e.input_field())
+        d.adb('shell','input','keycombination','113','122')
+        d.adb('shell','input','text','Prefix')
+        expected='PrefixBefore\n'+secret.PLACEHOLDER
+        d.wait_for(lambda:e.input_field().get('text')==expected)
+        envelope=secret.editor_envelope()
+        self.assertIn('sealed',envelope)
+        self.assertNotIn('PrefixBefore',json.dumps(envelope))
+        self.assertNotIn(secret.CIPHER,json.dumps(envelope))
+        self.assertEqual(source,self.note())
+        d.adb('shell','am','force-stop','ru.obsnotes')
+        d.adb('shell','am','start','-n','ru.obsnotes/.MainActivity')
+        d.wait_for(lambda:bool(d.nodes(d.tree(),desc='Назад')))
+        self.assertEqual(expected,e.input_field().get('text'))
+        self.save()
+        text=self.note()
+        self.assertIn('PrefixBefore\n`secret '+secret.CIPHER+'`',text)
+        self.assertNotIn(secret.PLACEHOLDER,text)
+        print('Phone: cached Keystore handle preserves sealed recovery, latest text and original secret across process restart',flush=True)
+
+    def test_14_task_and_background_update_keep_a_scrolled_viewport(self):
+        d.adb('shell','am','force-stop','ru.obsnotes')
+        source=SOURCE.replace('\nOne\n', '\nOne\n\n'+'\n\n'.join(f'Filler{i}' for i in range(18))+'\n')
+        e.put(self.relative,source)
+        self.start()
+        d.tap(d.find(desc='Развернуть раздел Alpha',down=False))
+        d.tap(d.find(desc='Развернуть раздел Facts'))
+        check=d.find(desc='Отметить: WearAccessory')
+        before=d.bounds(check)
+        d.tap(check)
+        d.wait_for(lambda:'WearAccessory ✅ '+self.today.isoformat() in self.note())
+        checked=d.find(desc='Снять отметку: WearAccessory')
+        self.assertLessEqual(abs(before[1]-d.bounds(checked)[1]),3)
+        current=self.note()
+        external=current.replace('- [x] WearAccessory ✅ '+self.today.isoformat(),'- [ ] WearAccessory')
+        self.assertNotEqual(current,external)
+        e.put(self.relative,external)
+        d.wait_for(lambda:bool(d.nodes(d.tree(),desc='Отметить: WearAccessory')))
+        updated=d.nodes(d.tree(),desc='Отметить: WearAccessory')[0]
+        self.assertLessEqual(abs(before[1]-d.bounds(updated)[1]),3)
+        self.assertEqual(external,self.note())
+        print('Phone: task toggle and background Markdown update preserve a scrolled viewport within 3 px',flush=True)
+
+    def test_15_reused_metadata_controls_edit_current_forms_after_typing(self):
+        self.select('One')
+        self.select('Other','Beta')
+        d.tap(d.find(desc='Редактировать выбранные записи',down=False))
+        d.wait_for(d.keyboard_shown)
+        d.tap(e.input_field())
+        d.adb('shell','input','keycombination','113','122')
+        d.adb('shell','input','text','Prefix')
+        d.wait_for(lambda:d.pending_editor()['parts']['value']=='PrefixOne\n\nOther')
+        p.hide_ime()
+        d.tap(d.find(desc='Удалить раздел: Beta'))
+        d.wait_for(lambda:not d.pending_editor()['parts']['items'][1]['routes'])
+        state=d.pending_editor()
+        self.assertEqual('PrefixOne\n\nOther',state['parts']['value'])
+        self.assertTrue(state['parts']['items'][0]['routes'])
+        self.save()
+        text=self.note()
+        self.assertIn('PrefixOne',text.split('## Alpha')[1].split('## Beta')[0])
+        self.assertIn('Other',text.split('## Beta')[1].split('## Fields')[0])
+        print('Phone: reused metadata handlers apply to current copied forms and preserve newly typed text',flush=True)
 
 
 if __name__=='__main__':

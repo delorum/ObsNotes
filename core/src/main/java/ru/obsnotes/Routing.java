@@ -144,11 +144,11 @@ public final class Routing {
 
     /** Only actual visible matching lines qualify, including duplicate keys in a shared block. */
     public List<FieldHit> matchingFields(DayOutline.Section section, String query) {
+      if (query.isBlank()) return List.of();
       Set<Integer> visible = new HashSet<>();
       for (var item : section.items())
         if (!item.projection())
           for (var line : item.view().lines()) visible.add(item.original().start() + line.start());
-      if (query.isBlank()) return List.of();
       return FuzzySearch.ranked(
           fields.stream()
               .filter(

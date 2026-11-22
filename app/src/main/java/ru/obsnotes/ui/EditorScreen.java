@@ -253,6 +253,19 @@ public final class EditorScreen {
       List<EditText> edits,
       int colorOffset,
       boolean rootChip) {
+    metadata(ui, state, catalog, group, actions, edits, colorOffset, rootChip, () -> state);
+  }
+
+  static void metadata(
+      Ui ui,
+      EditorState state,
+      Routing.Catalog catalog,
+      ChipGroup group,
+      Actions actions,
+      List<EditText> edits,
+      int colorOffset,
+      boolean rootChip,
+      java.util.function.Supplier<EditorState> current) {
     highlight(edits, state);
     group.removeAllViews();
     for (int i = 0; i < state.routes.size(); i++) {
@@ -269,13 +282,13 @@ public final class EditorScreen {
       chip.setCloseIconContentDescription("Удалить раздел: " + route.label());
       chip.setOnClickListener(
           v -> {
-            state.cursor = cursor(edits, state.cursor);
+            current.get().cursor = cursor(edits, current.get().cursor);
             actions.replaceRoute(index);
           });
       chip.setOnCloseIconClickListener(
           v -> {
-            state.cursor = cursor(edits, state.cursor);
-            state.removeRoute(index, catalog);
+            current.get().cursor = cursor(edits, current.get().cursor);
+            current.get().removeRoute(index, catalog);
             actions.routesChanged();
           });
       group.addView(chip);
@@ -304,14 +317,15 @@ public final class EditorScreen {
           label + (tag.oneLine() ? ", строка " + tag.line(clean) : ", весь блок"));
       chip.setOnClickListener(
           v -> {
-            state.cursor = cursor(edits, state.cursor);
+            current.get().cursor = cursor(edits, current.get().cursor);
             actions.replaceTag(index);
           });
       chip.setOnCloseIconClickListener(
           v -> {
-            state.removeUnmanagedTag(index, catalog);
+            current.get().removeUnmanagedTag(index, catalog);
             actions.changed();
-            metadata(ui, state, catalog, group, actions, edits, colorOffset, rootChip);
+            metadata(
+                ui, current.get(), catalog, group, actions, edits, colorOffset, rootChip, current);
           });
       group.addView(chip);
     }
@@ -324,9 +338,10 @@ public final class EditorScreen {
         chip.setOnClickListener(v -> actions.editLink("raw:" + index));
         chip.setOnCloseIconClickListener(
             v -> {
-              state.removeRootLink(index);
+              current.get().removeRootLink(index);
               actions.changed();
-              metadata(ui, state, catalog, group, actions, edits, colorOffset, true);
+              metadata(
+                  ui, current.get(), catalog, group, actions, edits, colorOffset, true, current);
             });
         group.addView(chip);
       }

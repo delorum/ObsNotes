@@ -114,6 +114,7 @@ public final class EditorParts {
     Set<EditorState> used = Collections.newSetFromMap(new IdentityHashMap<>());
     try {
       var spans = ranges(next);
+      var taggedBaseline = TaggedText.parse(baseline);
       if (next.isBlank() && parts.stream().anyMatch(part -> pinned(part.form())))
         spans = List.of(new int[] {0, 0});
       boolean replaceBatch =
@@ -210,7 +211,7 @@ public final class EditorParts {
               source.tags().stream()
                   .map(t -> new TaggedText.Tag(t.kind(), t.ids(), old.start() + t.position()))
                   .toList();
-          var mapped = TaggedText.parse(baseline).withTags(global).edit(next);
+          var mapped = taggedBaseline.withTags(global).edit(next);
           for (var t : mapped.tags) {
             if (t.kind().equals("crossPeople")) {
               tags.add(new TaggedText.Tag(t.kind(), t.ids(), 0));

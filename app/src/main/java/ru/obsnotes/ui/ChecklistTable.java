@@ -14,7 +14,9 @@ final class ChecklistTable {
     LinearLayout table = ui.column();
     TextView loading = ui.text("Загрузка чеклиста…", 14, Ui.MUTED);
     table.addView(loading);
-    content.addView(table);
+    var layout = new LinearLayout.LayoutParams(-1, -2);
+    layout.leftMargin = layout.rightMargin = ui.dp(10);
+    content.addView(table, layout);
     actions.checklist(
         rows -> {
           table.removeAllViews();

@@ -53,9 +53,12 @@ final class EditorPartsScreen {
         () -> {
           int index = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
           boolean locked = owner.parts.parts.get(index).form().locked();
-          lock.setIconResource(
-              locked ? ru.obsnotes.R.drawable.ic_lock : ru.obsnotes.R.drawable.ic_unlock);
-          lock.setContentDescription(locked ? "Расшифровать часть" : "Зашифровать часть");
+          if (!Boolean.valueOf(locked).equals(lock.getTag())) {
+            lock.setTag(locked);
+            lock.setIconResource(
+                locked ? ru.obsnotes.R.drawable.ic_lock : ru.obsnotes.R.drawable.ic_unlock);
+            lock.setContentDescription(locked ? "Расшифровать часть" : "Зашифровать часть");
+          }
         };
     LinearLayout panels = ui.column();
     ui.body.addView(panels);
@@ -73,17 +76,26 @@ final class EditorPartsScreen {
           for (int i = 0; i < cards.size(); i++) {
             boolean active = i == at;
             LinearLayout card = cards.get(i);
-            card.setSelected(active);
-            var background = ui.background(Ui.CARD, 14);
-            if (active) background.setStroke(ui.dp(1), Ui.INK);
-            card.setBackground(background);
+            if (card.isSelected() != active) {
+              card.setSelected(active);
+              var background = ui.background(Ui.CARD, 14);
+              if (active) background.setStroke(ui.dp(1), Ui.INK);
+              card.setBackground(background);
+            }
           }
         };
+    EditorPanels[] shown = {null};
     Runnable refresh =
         () -> {
+          highlightParts(input, owner);
+          var next = EditorPanels.of(owner);
+          if (next.equals(shown[0])) {
+            updateActive.run();
+            return;
+          }
+          shown[0] = next;
           panels.removeAllViews();
           cards.clear();
-          highlightParts(input, owner);
           if (!owner.parts.error.isEmpty()) panels.addView(ui.text(owner.parts.error, 12, Ui.RED));
           int colorOffset = 0;
           for (int i = 0; i < owner.parts.parts.size(); i++) {
@@ -93,12 +105,17 @@ final class EditorPartsScreen {
             Runnable select =
                 () -> {
                   owner.cursor = Math.max(0, input.getSelectionStart());
-                  form.cursor =
+                  var currentPart = owner.parts.parts.get(index);
+                  var current = currentPart.form();
+                  current.cursor =
                       Math.max(
-                          0, Math.min(form.editableText().length(), owner.cursor - part.start()));
+                          0,
+                          Math.min(
+                              current.editableText().length(), owner.cursor - currentPart.start()));
                   actions.part(index);
                 };
-            EditorScreen.Actions scoped = new PartActions(actions, select, () -> render[0].run());
+            EditorScreen.Actions scoped =
+                new PartActions(actions, select, () -> render[0].run(), !form.valueBound());
             LinearLayout card = ui.card(panels);
             card.setMinimumHeight(ui.dp(48));
             cards.add(card);
@@ -107,7 +124,16 @@ final class EditorPartsScreen {
             chips.setChipSpacingHorizontal(ui.dp(4));
             chips.setChipSpacingVertical(0);
             card.addView(chips);
-            EditorScreen.metadata(ui, form, catalog, chips, scoped, List.of(), colorOffset, false);
+            EditorScreen.metadata(
+                ui,
+                form,
+                catalog,
+                chips,
+                scoped,
+                List.of(),
+                colorOffset,
+                false,
+                () -> owner.parts.parts.get(index).form());
             if (form.valueBound()) {
               boolean task = !form.taskShell.isEmpty();
               Chip key =
@@ -120,7 +146,7 @@ final class EditorPartsScreen {
                   "Удалить назначение: " + (task ? "Задача: " : "") + form.valueLabel());
               key.setOnCloseIconClickListener(
                   v -> {
-                    form.removeValueTarget();
+                    owner.parts.parts.get(index).form().removeValueTarget();
                     scoped.routesChanged();
                   });
               chips.addView(key, 0);
@@ -166,7 +192,9 @@ final class EditorPartsScreen {
               chips.addView(root);
             }
             if (form.kind == Markdown.Kind.TASK && !form.taskAppend) {
-              chips.addView(TaskTextMode.button(ui, form, scoped::changed));
+              chips.addView(
+                  TaskTextMode.button(
+                      ui, () -> owner.parts.parts.get(index).form(), scoped::changed));
             }
             chips.setVisibility(
                 chips.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
@@ -303,7 +331,8 @@ final class EditorPartsScreen {
     }
   }
 
-  private record PartActions(EditorScreen.Actions parent, Runnable select, Runnable refresh)
+  private record PartActions(
+      EditorScreen.Actions parent, Runnable select, Runnable refresh, boolean localRoutes)
       implements EditorScreen.Actions {
     public void part(int i) {
       parent.part(i);
@@ -330,7 +359,10 @@ final class EditorPartsScreen {
 
     public void routesChanged() {
       select.run();
-      parent.routesChanged();
+      if (localRoutes) {
+        parent.changed();
+        refresh.run();
+      } else parent.routesChanged();
     }
 
     public void replaceRoute(int i) {

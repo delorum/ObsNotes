@@ -12,6 +12,8 @@ public final class Markdown {
   public static final Pattern FIELD = Pattern.compile("^([\\p{L}\\d_-]+)::(.*)$");
   public static final Pattern TASK = Pattern.compile("^\\s*- \\[[ xX]\\].*");
 
+  private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$");
+
   public record Section(String heading, String title, int level, int start, int body, int end) {}
 
   public record Block(int start, int end, Section section, String text) {
@@ -49,7 +51,7 @@ public final class Markdown {
     int fenceLength = 0;
     for (int i = 0; i < lines.size(); i++) {
       String line = lines.get(i);
-      Matcher f = Pattern.compile("^ {0,3}(`{3,}|~{3,}).*$").matcher(line);
+      Matcher f = FENCE.matcher(line);
       if (f.matches()) {
         if (!fence) {
           fence = true;
@@ -90,11 +92,12 @@ public final class Markdown {
       boolean inFence = false, generated = false;
       char marker = 0;
       int markerLength = 0;
-      for (int i = 0; i < lines.size(); i++) {
+      int first = Collections.binarySearch(offsets, s.body);
+      if (first < 0) first = -first - 1;
+      for (int i = first; i < lines.size() && offsets.get(i) < s.end; i++) {
         int pos = offsets.get(i);
-        if (pos < s.body || pos >= s.end) continue;
         String line = lines.get(i);
-        Matcher code = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$").matcher(line);
+        Matcher code = FENCE.matcher(line);
         boolean boundary = code.matches(), wasFence = inFence, wasGenerated = generated;
         if (boundary) {
           if (!inFence) {

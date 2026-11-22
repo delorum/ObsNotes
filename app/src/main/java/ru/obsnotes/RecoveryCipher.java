@@ -11,11 +11,14 @@ import javax.crypto.spec.GCMParameterSpec;
 final class RecoveryCipher {
   private static final String ALIAS = "obsnotes-editor-recovery-v1";
 
-  private SecretKey key() throws GeneralSecurityException {
+  private SecretKey cachedKey;
+
+  private synchronized SecretKey key() throws GeneralSecurityException {
+    if (cachedKey != null) return cachedKey;
     try {
       KeyStore store = KeyStore.getInstance("AndroidKeyStore");
       store.load(null);
-      if (store.containsAlias(ALIAS)) return (SecretKey) store.getKey(ALIAS, null);
+      if (store.containsAlias(ALIAS)) return cachedKey = (SecretKey) store.getKey(ALIAS, null);
       KeyGenerator generator =
           KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
       generator.init(
@@ -25,7 +28,7 @@ final class RecoveryCipher {
               .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
               .setKeySize(256)
               .build());
-      return generator.generateKey();
+      return cachedKey = generator.generateKey();
     } catch (java.io.IOException e) {
       throw new GeneralSecurityException(e);
     }

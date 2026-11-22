@@ -9,7 +9,6 @@ public final class BlockSelection {
   public record Entry(String path, String snapshot, Markdown.Block block) {}
 
   private final List<Entry> entries = new ArrayList<>();
-  public boolean onlySelected;
 
   public List<Entry> entries() {
     return List.copyOf(entries);
@@ -21,7 +20,6 @@ public final class BlockSelection {
 
   public void clear() {
     entries.clear();
-    onlySelected = false;
   }
 
   public boolean contains(String path, Markdown.Block block) {
@@ -40,7 +38,6 @@ public final class BlockSelection {
       if (!document.blocks.contains(block)) throw new IllegalArgumentException("Запись изменилась");
       entries.add(new Entry(path, document.text, block));
     }
-    if (entries.isEmpty()) onlySelected = false;
   }
 
   public List<Entry> ordered(String dailyPath, Map<String, Markdown> current) {
@@ -56,20 +53,6 @@ public final class BlockSelection {
                 .thenComparing(Entry::path)
                 .thenComparingInt(e -> e.block().start()))
         .toList();
-  }
-
-  public List<DayOutline.Section> filter(List<DayOutline.Section> source, String dailyPath) {
-    List<DayOutline.Section> result = new ArrayList<>();
-    for (var section : source) {
-      var items =
-          section.items().stream()
-              .filter(i -> contains(i.path().isEmpty() ? dailyPath : i.path(), i.original()))
-              .toList();
-      var children = filter(section.children(), dailyPath);
-      if (!items.isEmpty() || !children.isEmpty())
-        result.add(new DayOutline.Section(section.heading(), section.title(), items, children));
-    }
-    return List.copyOf(result);
   }
 
   /**

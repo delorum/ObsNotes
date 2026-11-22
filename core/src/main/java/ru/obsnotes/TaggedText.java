@@ -32,10 +32,11 @@ public final class TaggedText {
     this.tags = List.copyOf(tags);
   }
 
+  private static final Pattern TAG =
+      Pattern.compile("([ \\t]*)#(crossPeople|crossOneLine|person|personOneLine)/([\\p{L}\\d]+)");
+
   public static TaggedText parse(String raw) {
-    Matcher m =
-        Pattern.compile("([ \\t]*)#(crossPeople|crossOneLine|person|personOneLine)/([\\p{L}\\d]+)")
-            .matcher(raw);
+    Matcher m = TAG.matcher(raw);
     StringBuilder clean = new StringBuilder();
     List<Tag> tags = new ArrayList<>();
     int from = 0;

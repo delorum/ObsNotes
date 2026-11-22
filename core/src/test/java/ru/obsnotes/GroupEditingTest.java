@@ -62,13 +62,120 @@ public class GroupEditingTest {
             .map(BlockSelection.Entry::block)
             .toList());
     assertEquals(2, selection.size());
-    selection.onlySelected = true;
-    assertEquals(2, selection.filter(DayOutline.sections(DOC, TEMPLATE), PATH).size());
+    assertTrue(selection.contains(PATH, DOC.blocks.get(1)));
+    assertTrue(selection.contains(PATH, DOC.blocks.get(3)));
     assertThrows(
         IllegalArgumentException.class,
         () -> selection.ordered(PATH, Map.of(PATH, new Markdown(DOC.text + "external"))));
     selection.clear();
-    assertFalse(selection.onlySelected);
+    assertEquals(0, selection.size());
+  }
+
+  @Test
+  public void togglingTheLastSelectedOriginalExitsAndSelectionCanStartAgain() {
+    var selection = new BlockSelection();
+    var first = DOC.blocks.get(1);
+    var second = DOC.blocks.get(3);
+    selection.toggle(PATH, DOC, first);
+    selection.toggle(PATH, DOC, second);
+    selection.toggle(PATH, DOC, first);
+    assertEquals(1, selection.size());
+    assertFalse(selection.contains(PATH, first));
+    assertTrue(selection.contains(PATH, second));
+    selection.toggle(PATH, DOC, second);
+    assertEquals(0, selection.size());
+    selection.toggle(PATH, DOC, first);
+    assertEquals(
+        List.of(first),
+        selection.ordered(PATH, Map.of(PATH, DOC)).stream()
+            .map(BlockSelection.Entry::block)
+            .toList());
+  }
+
+  @Test
+  public void routingCatalogReusesImmutableSnapshotsAcrossTypingAndCopies() {
+    var state = batch(DOC, 1);
+    var form = state.parts.parts.get(0).form();
+    var catalog = form.routingCatalog(TEMPLATE);
+    form.edit("New text");
+    assertSame(catalog, form.routingCatalog(new Markdown(TEMPLATE.text)));
+    assertSame(catalog, form.copy().routingCatalog(TEMPLATE));
+  }
+
+  @Test
+  public void routingCatalogRefreshesForDestinationTemplateAndWorkAvailability() {
+    var form = batch(DOC, 1).parts.parts.get(0).form();
+    var before = form.routingCatalog(TEMPLATE);
+    form.destinationSnapshot += "\r\n## Fresh\r\nKey:: NewValue\r\n";
+    var changed = form.routingCatalog(TEMPLATE);
+    assertNotSame(before, changed);
+    assertTrue(changed.choices.stream().anyMatch(c -> c.label().equals("Key")));
+    var template = new Markdown(TEMPLATE.text + "\n## NewTemplateSection\n");
+    var changedTemplate = form.routingCatalog(template);
+    assertNotSame(changed, changedTemplate);
+    assertTrue(
+        changedTemplate.choices.stream().anyMatch(c -> c.label().equals("NewTemplateSection")));
+    form.workSnapshot = "## Основные события\n";
+    var withWork = form.routingCatalog(template);
+    assertNotSame(changedTemplate, withWork);
+    assertTrue(
+        withWork.choices.stream().anyMatch(c -> c.target().heading().equals(WorkDaily.ROUTE)));
+    form.workSnapshot = null;
+    assertTrue(
+        form.routingCatalog(template).choices.stream()
+            .noneMatch(c -> c.target().heading().equals(WorkDaily.ROUTE)));
+  }
+
+  @Test
+  public void manySectionsKeepExactRangesAndCodeBoundaries() {
+    for (String newline : List.of("\n", "\r\n")) {
+      StringBuilder source = new StringBuilder("front matter" + newline);
+      for (int i = 0; i < 120; i++)
+        source.append(
+            "## S"
+                + i
+                + newline
+                + newline
+                + "First"
+                + i
+                + newline
+                + newline
+                + "```text"
+                + newline
+                + "## NotASection"
+                + newline
+                + newline
+                + "Code"
+                + i
+                + newline
+                + "```"
+                + newline
+                + newline
+                + "```dataviewjs"
+                + newline
+                + "generated();"
+                + newline
+                + "```"
+                + newline
+                + newline
+                + "Last"
+                + i
+                + newline);
+      var document = new Markdown(source.toString());
+      assertEquals(120, document.sections.size());
+      assertEquals(360, document.blocks.size());
+      for (int i = 0; i < 120; i++) {
+        var blocks = document.blocks.subList(i * 3, i * 3 + 3);
+        assertEquals("First" + i, blocks.get(0).text());
+        assertTrue(blocks.get(1).text().contains("## NotASection"));
+        assertEquals("Last" + i, blocks.get(2).text());
+        for (var block : blocks) {
+          assertEquals("## S" + i, block.section().heading());
+          assertEquals(block.text(), document.text.substring(block.start(), block.end()));
+        }
+      }
+      assertTrue(new Markdown("## Empty").blocks.isEmpty());
+    }
   }
 
   @Test

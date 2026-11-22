@@ -6,6 +6,7 @@ import org.json.*;
 /** Internal recovery snapshot for interrupted or failed saves; no separate draft workflow. */
 public final class EditorRecovery {
   private final SharedPreferences prefs;
+  private final RecoveryCipher cipher = new RecoveryCipher();
 
   public EditorRecovery(SharedPreferences prefs) {
     this.prefs = prefs;
@@ -28,7 +29,7 @@ public final class EditorRecovery {
       if (sensitive) {
         JSONObject envelope = new JSONObject();
         envelope.put("vault", vault);
-        envelope.put("sealed", new RecoveryCipher().seal(j.toString()));
+        envelope.put("sealed", cipher.seal(j.toString()));
         j = envelope;
       }
       prefs.edit().putString(key(vault), j.toString()).remove(legacyKey(vault)).apply();
@@ -43,7 +44,7 @@ public final class EditorRecovery {
     try {
       JSONObject j = new JSONObject(value);
       if (!j.getString("vault").equals(vault)) return null;
-      if (j.has("sealed")) j = new JSONObject(new RecoveryCipher().open(j.getString("sealed")));
+      if (j.has("sealed")) j = new JSONObject(cipher.open(j.getString("sealed")));
       if (!j.getString("vault").equals(vault)) return null;
       return decode(j);
     } catch (JSONException | IllegalArgumentException | java.security.GeneralSecurityException e) {

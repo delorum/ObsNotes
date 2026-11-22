@@ -18,7 +18,7 @@ public final class DayScreen {
 
     void select(DayContentRules.Item item);
 
-    void selectionView();
+    void editSelection();
 
     void selectionReset();
 
@@ -79,27 +79,7 @@ public final class DayScreen {
     boolean searchFocused = previous != null && "section-search".equals(previous.getTag());
     ui.page("ObsNotes", null);
     ui.body.setFocusableInTouchMode(true);
-    if (selection.size() > 0) {
-      var count = ui.button(Integer.toString(selection.size()), actions::selectionView);
-      count.setContentDescription(
-          selection.onlySelected ? "Вернуть результаты поиска" : "Показать выбранные записи");
-      count.setSelected(selection.onlySelected);
-      count.setGravity(android.view.Gravity.CENTER);
-      count.setPadding(0, 0, 0, 0);
-      count.setInsetTop(0);
-      count.setInsetBottom(0);
-      if (selection.onlySelected) {
-        count.setStrokeColor(ColorStateList.valueOf(Ui.INK));
-        count.setStrokeWidth(ui.dp(1));
-      }
-      ui.bar.addView(count, new LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)));
-      ui.action(ui.bar, ru.obsnotes.R.drawable.ic_clear, "Сбросить выбор", actions::selectionReset);
-    } else {
-      if (connected) ui.action(ui.bar, ru.obsnotes.R.drawable.ic_today, "Сегодня", actions::today);
-      if (connected)
-        ui.action(ui.bar, ru.obsnotes.R.drawable.ic_refresh, "Обновить", actions::refresh);
-      ui.action(ui.bar, ru.obsnotes.R.drawable.ic_settings, "Настройки", actions::settings);
-    }
+    var controls = new SelectionControls(ui, selection, actions, connected);
     if (!connected) {
       ui.body.addView(ui.text("Выберите папку хранилища в настройках", 16, Ui.MUTED));
       ui.body.addView(ui.button("Выбрать хранилище", actions::pickVault));
@@ -176,10 +156,8 @@ public final class DayScreen {
         () -> {
           results.removeAllViews();
           headers.clear();
-          var found =
-              selection.onlySelected
-                  ? new DaySearch(selection.filter(outline, dailyPath), rules).result("")
-                  : index.result(search.getText().toString());
+          controls.clearRows();
+          var found = index.result(search.getText().toString());
           for (var section : found.sections())
             section(
                 ui,
@@ -190,18 +168,18 @@ public final class DayScreen {
                 headers,
                 reveal,
                 catalog,
-                selection.onlySelected ? " " : search.getText().toString(),
+                search.getText().toString(),
                 found.fullHeadings(),
                 selection,
                 dailyPath,
-                drag);
+                drag,
+                controls);
           if (results.getChildCount() == 0)
             results.addView(ui.text("Разделы не найдены", 14, Ui.MUTED));
         };
     ui.watch(
         search,
         value -> {
-          selection.onlySelected = false;
           actions.searchChanged(value);
           render[0].run();
         });
@@ -231,14 +209,17 @@ public final class DayScreen {
       Set<String> fullHeadings,
       BlockSelection selection,
       String dailyPath,
-      BlockDrag drag) {
+      BlockDrag drag,
+      SelectionControls controls) {
     String heading = section.heading();
     // Search can match a parent and its child; render each visible heading once.
     if (headers.containsKey(heading)) return;
     LinearLayout card = ui.card(parent), header = ui.row(), content = ui.column();
+    // Nested sections share horizontal edges; inset their own content instead of the container.
     card.setPadding(0, ui.dp(8), 0, ui.dp(8));
+    header.setPadding(ui.dp(10), 0, ui.dp(10), 0);
     headers.put(heading, card);
-    boolean open = selection.onlySelected || !query.isBlank() || expanded.contains(heading);
+    boolean open = !query.isBlank() || expanded.contains(heading);
     boolean whole = query.isBlank() || fullHeadings.contains(heading);
     var fields = catalog.matchingFields(section, whole ? "" : query);
     var items = DaySearch.withoutFields(section.items(), fields);
@@ -250,7 +231,8 @@ public final class DayScreen {
           if (whole && heading.equals("## Чеклист"))
             ChecklistTable.add(ui, content, actions, reveal);
           for (var item : items)
-            DayBlockView.add(ui, content, item, expanded, actions, selection, dailyPath, drag);
+            DayBlockView.add(
+                ui, content, item, expanded, actions, selection, dailyPath, drag, controls);
           for (var child : section.children())
             section(
                 ui,
@@ -265,11 +247,15 @@ public final class DayScreen {
                 fullHeadings,
                 selection,
                 dailyPath,
-                drag);
+                drag,
+                controls);
           if (whole
               && section.items().isEmpty()
               && section.children().isEmpty()
-              && !heading.equals("## Чеклист")) content.addView(ui.text("Пусто", 14, Ui.MUTED));
+              && !heading.equals("## Чеклист")) {
+            TextView empty = ui.text("Пусто", 14, Ui.MUTED);
+            inset(ui, content, empty);
+          }
         };
     var disclosure =
         ui.icon(
@@ -314,12 +300,18 @@ public final class DayScreen {
       result.setGravity(android.view.Gravity.CENTER_VERTICAL);
       result.setContentDescription("Dataview: " + field.label());
       result.setOnClickListener(v -> actions.edit(field.block()));
-      card.addView(result);
+      inset(ui, card, result);
     }
     LinearLayout.LayoutParams contentLayout = new LinearLayout.LayoutParams(-1, -2);
     contentLayout.topMargin = ui.dp(8);
     card.addView(content, contentLayout);
     content.setVisibility(open ? View.VISIBLE : View.GONE);
     if (open) populate.run();
+  }
+
+  private static void inset(Ui ui, LinearLayout parent, View child) {
+    var layout = new LinearLayout.LayoutParams(-1, -2);
+    layout.leftMargin = layout.rightMargin = ui.dp(10);
+    parent.addView(child, layout);
   }
 }

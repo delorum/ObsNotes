@@ -391,6 +391,7 @@ public final class MainActivity extends AppCompatActivity {
           try {
             String fresh = selectedStorage.read(requested);
             WorkState freshWork = readWork(selectedStorage, requestedDay);
+            Markdown parsed = fresh.equals(previous) ? null : new Markdown(fresh);
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
@@ -405,7 +406,7 @@ public final class MainActivity extends AppCompatActivity {
                               previousWork == null ? null : previousWork.document().text,
                               freshWork.note() == null ? null : freshWork.note().document().text)
                           || !Objects.equals(workError, freshWork.error()))) {
-                    document = new Markdown(fresh);
+                    if (parsed != null) document = parsed;
                     setWork(freshWork);
                     showDayKeepingPosition();
                   }
@@ -445,17 +446,14 @@ public final class MainActivity extends AppCompatActivity {
                 String sourcePath = item.path().isEmpty() ? path : item.path();
                 Markdown source = sourcePath.equals(path) ? document : workNote.document();
                 selection.toggle(sourcePath, source, item.original());
-                showDayKeepingPosition();
               }
 
-              public void selectionView() {
-                selection.onlySelected = !selection.onlySelected;
-                showDayKeepingPosition();
+              public void editSelection() {
+                startBatch();
               }
 
               public void selectionReset() {
                 selection.clear();
-                showDayKeepingPosition();
               }
 
               public void reorder(Markdown.Block from, Markdown.Block to, String sourcePath) {
@@ -495,10 +493,6 @@ public final class MainActivity extends AppCompatActivity {
               }
 
               public void edit(Markdown.Block block, String sourcePath) {
-                if (!busy && selection.contains(sourcePath.isEmpty() ? path : sourcePath, block)) {
-                  startBatch();
-                  return;
-                }
                 if (!busy)
                   startEditor(
                       block, sourcePath.isEmpty() ? block.section().heading() : WorkDaily.ROUTE);

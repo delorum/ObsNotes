@@ -37,6 +37,11 @@ public final class EditorState {
   public String removedRootBefore = "", removedRootAfter = "";
   public boolean deferRootCleanup;
 
+  // The catalog depends only on immutable destination/template snapshots, never on typed text.
+  private Routing.Catalog cachedCatalog;
+  private String catalogDestination, catalogTemplate;
+  private boolean catalogWork;
+
   public void enableParts(Markdown template) {
     if (weatherForm) return;
     boolean creating = parts == null;
@@ -126,6 +131,10 @@ public final class EditorState {
     s.taskAppend = taskAppend;
     s.fallbackHeading = fallbackHeading;
     s.routes = List.copyOf(routes);
+    s.cachedCatalog = cachedCatalog;
+    s.catalogDestination = catalogDestination;
+    s.catalogTemplate = catalogTemplate;
+    s.catalogWork = catalogWork;
     return s;
   }
 
@@ -668,7 +677,17 @@ public final class EditorState {
   }
 
   public Routing.Catalog routingCatalog(Markdown template) {
-    return new Routing.Catalog(new Markdown(destinationSnapshot), template, workSnapshot != null);
+    boolean withWork = workSnapshot != null;
+    if (cachedCatalog == null
+        || !destinationSnapshot.equals(catalogDestination)
+        || !template.text.equals(catalogTemplate)
+        || withWork != catalogWork) {
+      cachedCatalog = new Routing.Catalog(new Markdown(destinationSnapshot), template, withWork);
+      catalogDestination = destinationSnapshot;
+      catalogTemplate = template.text;
+      catalogWork = withWork;
+    }
+    return cachedCatalog;
   }
 
   public void initializeRoutes(Markdown template) {
