@@ -405,7 +405,8 @@ public final class EditorState {
     int at = Events.rootId(value).isEmpty() ? -1 : Events.rootCalloutStart(value);
     String callout = at < 0 ? "" : value.substring(at),
         body = at < 0 ? value : value.substring(0, at);
-    Matcher anchor = Pattern.compile("(?:^|[ \t]+)\\^([A-Za-z0-9_-]+)[ \t]*$").matcher(body);
+    // Parts.join inserts one separator; earlier spaces/tabs belong to editable text.
+    Matcher anchor = Pattern.compile("(?:^|[ \t])\\^([A-Za-z0-9_-]+)[ \t]*$").matcher(body);
     String id = "";
     if (anchor.find()) {
       id = anchor.group(1);
