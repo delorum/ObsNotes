@@ -69,7 +69,7 @@ final class EditorPartsScreen {
     Runnable updateActive =
         () -> {
           updateLock.run();
-          int at = owner.parts.partAt(Math.max(0, input.getSelectionStart()));
+          int at = owner.parts.selectAt(Math.max(0, input.getSelectionStart()));
           boolean simple = WorkDaily.selected(owner.parts.parts.get(at).form());
           for (var control : noteTools)
             control.setVisibility(simple ? android.view.View.GONE : android.view.View.VISIBLE);
@@ -120,6 +120,23 @@ final class EditorPartsScreen {
             card.setMinimumHeight(ui.dp(48));
             cards.add(card);
             card.setContentDescription("Назначения части " + (i + 1));
+            card.setOnClickListener(
+                v -> {
+                  ui.focusInput(input);
+                  int caret = owner.parts.selectEnd(index);
+                  actions.part(index);
+                  if (input.getSelectionStart() == caret && input.getSelectionEnd() == caret)
+                    updateActive.run();
+                  else input.setSelection(caret);
+                  input.post(
+                      () -> {
+                        if (input.isAttachedToWindow()
+                            && input.hasFocus()
+                            && owner.parts.selected == index
+                            && input.getSelectionStart() == caret
+                            && input.getSelectionEnd() == caret) input.bringPointIntoView(caret);
+                      });
+                });
             ChipGroup chips = new ChipGroup(ui.activity);
             chips.setChipSpacingHorizontal(ui.dp(4));
             chips.setChipSpacingVertical(0);

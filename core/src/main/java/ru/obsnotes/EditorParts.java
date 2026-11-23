@@ -342,6 +342,11 @@ public final class EditorParts {
   }
 
   public int partAt(int cursor) {
+    // Cleared batch originals can share one empty position; retain the explicitly chosen card.
+    if (selected >= 0 && selected < parts.size()) {
+      var current = parts.get(selected);
+      if (current.start() == current.end() && cursor == current.start()) return selected;
+    }
     int index = 0;
     for (int i = 0; i < parts.size(); i++) if (parts.get(i).start() <= cursor) index = i;
     return index;
@@ -349,6 +354,15 @@ public final class EditorParts {
 
   public int selectAt(int cursor) {
     return selected = partAt(cursor);
+  }
+
+  /** Select a metadata card using the latest visible ranges, excluding hidden Markdown metadata. */
+  public int selectEnd(int index) {
+    var part = parts.get(index);
+    selected = index;
+    owner.cursor = Math.max(0, Math.min(value.length(), part.end()));
+    part.form().cursor = Math.max(0, owner.cursor - part.start());
+    return owner.cursor;
   }
 
   public PartLinks effectiveLinks() {
