@@ -17,8 +17,8 @@ import device_editor_parts as p
 import device_editor_exit as e
 
 PASSWORD='FixturePassword!2026'
-PIN='0123'
-NEWPIN='5678'
+PIN='FixtureAccessKey!2026'
+NEWPIN='ChangedAccessKey!2026'
 MULTI_CLEAR='FixtureSecret\nSecondLine\n\nLastParagraph'
 CLEAR='FixtureSecret\nSecondLine\nLastParagraph'
 MULTI_CIPHER='h6VlaAwU8ufUmGSt/8LmRKOlM1DeqSB4VMvrzcMBx9BrKJyudVi0AWkdsq9nd4cyNtBP6Ssxk2yGxLHWRFyQ8x/d9T0PF+nLuW+nFPwxbhXR90Xpb3t+'
@@ -119,8 +119,12 @@ class EncryptionTest(unittest.TestCase):
         d.tap(d.find(desc='Настройки',down=False));d.wait_for(lambda: bool(d.nodes(d.tree(),text='Шифрование')))
     def back_settings(self): d.tap(d.find(desc='Назад',down=False));self.main()
     def unlock(self,pin=PIN):
-        d.wait_for(lambda: bool(d.nodes(d.tree(),text='PIN шифрования')))
-        enter('PIN',pin);press('Открыть')
+        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Пинкод шифрования')))
+        d.wait_for(d.keyboard_shown)
+        field=d.find(desc='Пинкод')
+        self.assertEqual('true',field.get('focused'))
+        self.assertEqual('true',field.get('password'))
+        enter('Пинкод',pin);press('Открыть')
     def lock(self):
         d.tap(d.find(desc='Зашифровать часть'));d.wait_for(lambda: e.input_field().get('text')==PLACEHOLDER);p.hide_ime()
     def opened(self,clear=CLEAR):
@@ -136,17 +140,17 @@ class EncryptionTest(unittest.TestCase):
         d.wait_for(lambda: bool(d.nodes(d.tree(),text='Сначала создайте пароль в настройках')))
         self.assertEqual(original,self.note());self.exit();self.assertEqual(stamp,self.stamp())
         self.settings();press('Создать пароль')
-        enter('Пароль',PASSWORD);enter('Повторите пароль','FixturePassword!2027');enter('PIN (4 цифры)',PIN);enter('Повторите PIN',PIN)
-        for desc in ('Пароль','Повторите пароль','PIN (4 цифры)','Повторите PIN'):
+        enter('Пароль',PASSWORD);enter('Повторите пароль','FixturePassword!2027');enter('Пинкод',PIN);enter('Повторите пинкод',PIN)
+        for desc in ('Пароль','Повторите пароль','Пинкод','Повторите пинкод'):
             self.assertEqual('false',d.find(desc=desc).get('password'))
         press('Сохранить');self.assertIsNone(wrapped())
-        enter('Повторите пароль',PASSWORD);enter('Повторите PIN','0124');press('Сохранить');self.assertIsNone(wrapped())
-        enter('Повторите PIN',PIN);press('Сохранить')
+        enter('Повторите пароль',PASSWORD);enter('Повторите пинкод','0124');press('Сохранить');self.assertIsNone(wrapped())
+        enter('Повторите пинкод',PIN);press('Сохранить')
         d.wait_for(lambda: wrapped() is not None)
         self.assertEqual(PASSWORD,decrypt_plugin(wrapped(),PIN));self.assertNotIn(PASSWORD,d.preferences().decode())
         self.back_settings();self.open(PLACEHOLDER)
         d.tap(d.find(desc='Расшифровать часть'));self.unlock('0000')
-        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Неверный PIN')))
+        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Неверный пинкод')))
         self.assertEqual(PLACEHOLDER,e.input_field().get('text'))
         d.tap(d.find(desc='Расшифровать часть'));self.unlock();self.opened()
         self.assertEqual(original,self.note());self.assertEqual(stamp,self.stamp())
@@ -171,10 +175,10 @@ class EncryptionTest(unittest.TestCase):
         print('Java → plugin, three-minute cache reuse, process-death cache reset and final open-lock plaintext save passed',flush=True)
 
         # PIN change always verifies the old PIN, even when the operation cache is valid.
-        self.settings();press('Изменить PIN');enter('Старый PIN','0000');enter('Новый PIN',NEWPIN);enter('Повторите новый PIN',NEWPIN);press('Сохранить')
-        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Неверный старый PIN')))
+        self.settings();press('Изменить пинкод');enter('Старый пинкод','0000');enter('Новый пинкод',NEWPIN);enter('Повторите новый пинкод',NEWPIN);press('Сохранить')
+        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Неверный старый пинкод')))
         self.assertEqual(PASSWORD,decrypt_plugin(wrapped(),PIN))
-        press('Изменить PIN');enter('Старый PIN',PIN);enter('Новый PIN',NEWPIN);enter('Повторите новый PIN',NEWPIN);press('Сохранить')
+        press('Изменить пинкод');enter('Старый пинкод',PIN);enter('Новый пинкод',NEWPIN);enter('Повторите новый пинкод',NEWPIN);press('Сохранить')
         d.wait_for(lambda: decrypt_plugin(wrapped(),NEWPIN)==PASSWORD)
         self.assertIsNone(decrypt_plugin(wrapped(),PIN));self.back_settings()
         self.open('EditedSecret');d.tap(d.find(desc='Зашифровать часть'));self.unlock(NEWPIN)
@@ -191,12 +195,12 @@ class EncryptionTest(unittest.TestCase):
         self.assertEqual('EditedSecret',decrypt_plugin(self.saved_cipher(),PASSWORD))
         print('Actual three-minute expiry requested PIN again; no background file writes during the wait',flush=True)
 
-        self.settings();press('Изменить пароль');enter('Старый PIN',NEWPIN);enter('Новый пароль','ChangedFixturePassword');enter('Повторите новый пароль','ChangedFixturePassword');press('Сохранить')
+        self.settings();press('Изменить пароль');enter('Старый пинкод',NEWPIN);enter('Новый пароль','ChangedFixturePassword');enter('Повторите новый пароль','ChangedFixturePassword');press('Сохранить')
         d.wait_for(lambda: decrypt_plugin(wrapped(),NEWPIN)=='ChangedFixturePassword')
         self.assertNotIn('ChangedFixturePassword',d.preferences().decode())
-        d.tap(d.find(desc='Удалить пароль'));enter('Старый PIN','0000');press('Удалить')
-        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Неверный PIN')));self.assertIsNotNone(wrapped())
-        d.tap(d.find(desc='Удалить пароль'));enter('Старый PIN',NEWPIN);press('Удалить')
+        d.tap(d.find(desc='Удалить пароль'));enter('Старый пинкод','0000');press('Удалить')
+        d.wait_for(lambda: bool(d.nodes(d.tree(),text='Неверный пинкод')));self.assertIsNotNone(wrapped())
+        d.tap(d.find(desc='Удалить пароль'));enter('Старый пинкод',NEWPIN);press('Удалить')
         d.wait_for(lambda: wrapped() is None)
         self.assertIsNotNone(d.find(text='Создать пароль'))
         print('Password change and authenticated deletion passed',flush=True)
@@ -226,7 +230,7 @@ class EncryptionTest(unittest.TestCase):
         before,stamp=self.note(),self.stamp()
         self.settings();press('Создать пароль')
         enter('Пароль',PASSWORD);enter('Повторите пароль',PASSWORD)
-        enter('PIN (4 цифры)',PIN);enter('Повторите PIN',PIN);press('Сохранить')
+        enter('Пинкод',PIN);enter('Повторите пинкод',PIN);press('Сохранить')
         d.wait_for(lambda:wrapped() is not None);self.back_settings()
         self.open(PLACEHOLDER);d.tap(d.find(desc='Расшифровать часть'));self.unlock();self.opened(MULTI_CLEAR)
         self.assertIsNotNone(d.find(desc='Назначения части 1'))
@@ -248,7 +252,7 @@ class EncryptionTest(unittest.TestCase):
         before,stamp=self.note(),self.stamp()
         self.settings();press('Создать пароль')
         enter('Пароль',PASSWORD);enter('Повторите пароль','FixturePassword!2027')
-        enter('PIN (4 цифры)',PIN);enter('Повторите PIN',PIN);press('Сохранить')
+        enter('Пинкод',PIN);enter('Повторите пинкод',PIN);press('Сохранить')
         self.assertIsNone(wrapped())
         self.assertGreater(e.pixels(d.find(desc='Повторите пароль'),(239,115,124)),20)
         self.assertFalse(any('не совпадают' in n.get('text','') for n in d.tree().iter('node')))

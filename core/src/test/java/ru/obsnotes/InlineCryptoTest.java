@@ -57,7 +57,7 @@ public class InlineCryptoTest {
   }
 
   @Test
-  public void passwordIsStoredOnlyInAuthenticatedPinEncryptedForm() {
+  public void passwordIsStoredOnlyInAuthenticatedWrappedForm() {
     String wrapped = PasswordSession.create(PASSWORD, "0123");
     assertFalse(wrapped.contains(PASSWORD));
     var session = new PasswordSession(() -> 0);
@@ -82,9 +82,89 @@ public class InlineCryptoTest {
   }
 
   @Test
-  public void pinIsExactlyFourAsciiDigitsAndPasswordCannotBeEmpty() {
-    for (String pin : List.of("123", "12345", "１２３４", "a123", "12 3"))
-      assertThrows(IllegalArgumentException.class, () -> PasswordSession.create("password", pin));
-    assertThrows(IllegalArgumentException.class, () -> PasswordSession.create("", "1234"));
+  public void bothPasswordsMustBeNonempty() {
+    assertThrows(IllegalArgumentException.class, () -> PasswordSession.create("password", ""));
+    assertThrows(IllegalArgumentException.class, () -> PasswordSession.create("", "unlock"));
+    assertThrows(IllegalArgumentException.class, () -> new PasswordSession(() -> 0).unlock("", ""));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> PasswordSession.change(LEGACY_WRAPPED, "0123", "", true));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> PasswordSession.change(LEGACY_WRAPPED, "0123", "", false));
+  }
+
+  // Fixed synthetic envelope produced with the old four-digit credential and existing wire format.
+  private static final String LEGACY_WRAPPED =
+      "EBESExQVFhcYGRobHB0eHwABAgMEBQYHCAkKCwwNDg8q4xjxH8s3NYo/WJbKzfrMPhUudADf5mZ5sddoRShD0CwefAI6";
+  private static final String LEGACY_MASTER = "Fixture legacy master";
+
+  @Test
+  public void pincodeCanBeTextUnicodeShortOrLongWithoutShapeRestrictions() {
+    for (String unlock :
+        List.of("x", "a123", "１２３４", "слово 🌲 e\u0301", " leading trailing ", "z".repeat(256))) {
+      String wrapped = PasswordSession.create(PASSWORD, unlock);
+      try (var session = new PasswordSession(() -> 0)) {
+        session.unlock(wrapped, unlock);
+        assertArrayEquals(PASSWORD.toCharArray(), session.copy());
+      }
+    }
+  }
+
+  @Test
+  public void legacyFourDigitWrappedPasswordStillUnlocks() {
+    try (var session = new PasswordSession(() -> 0)) {
+      session.unlock(LEGACY_WRAPPED, "0123");
+      assertArrayEquals(LEGACY_MASTER.toCharArray(), session.copy());
+    }
+  }
+
+  @Test
+  public void changingPincodeKeepsEncryptionPasswordAndRejectsTheOldKey() {
+    String key = "New access phrase!2026";
+    String changed = PasswordSession.change(LEGACY_WRAPPED, "0123", key, true);
+    assertNotEquals(LEGACY_WRAPPED, changed);
+    try (var session = new PasswordSession(() -> 0)) {
+      session.unlock(changed, key);
+      assertArrayEquals(LEGACY_MASTER.toCharArray(), session.copy());
+      assertThrows(IllegalArgumentException.class, () -> session.unlock(changed, "0123"));
+    }
+  }
+
+  @Test
+  public void changingEncryptionPasswordKeepsTheSamePincode() {
+    String changed = PasswordSession.change(LEGACY_WRAPPED, "0123", "New master 🌲", false);
+    try (var session = new PasswordSession(() -> 0)) {
+      session.unlock(changed, "0123");
+      assertArrayEquals("New master 🌲".toCharArray(), session.copy());
+    }
+    assertEquals(LEGACY_MASTER, InlineCrypto.decrypt(LEGACY_WRAPPED, "0123".toCharArray()));
+  }
+
+  @Test
+  public void activeSessionCannotBypassTheCurrentPincodeForCredentialChanges() {
+    try (var session = new PasswordSession(() -> 0)) {
+      session.unlock(LEGACY_WRAPPED, "0123");
+      assertNotNull(session.copy());
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> PasswordSession.change(LEGACY_WRAPPED, "wrong current", "New unlock", true));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> PasswordSession.change(LEGACY_WRAPPED, "wrong current", "New master", false));
+      assertArrayEquals(LEGACY_MASTER.toCharArray(), session.copy());
+    }
+  }
+
+  @Test
+  public void pincodeIsUsedExactlyWithoutTrimmingOrUnicodeNormalization() {
+    String key = " secret e\u0301 ";
+    String wrapped = PasswordSession.create(PASSWORD, key);
+    try (var session = new PasswordSession(() -> 0)) {
+      for (String other : List.of(key.strip(), key.toUpperCase(Locale.ROOT), " secret é "))
+        assertThrows(IllegalArgumentException.class, () -> session.unlock(wrapped, other));
+      session.unlock(wrapped, key);
+      assertArrayEquals(PASSWORD.toCharArray(), session.copy());
+    }
   }
 }

@@ -54,7 +54,7 @@ public final class SettingsScreen {
       if (!hasPassword) ui.body.addView(ui.button("Создать пароль", () -> actions.password(0)));
       else {
         LinearLayout passwords = ui.row();
-        ui.weighted(passwords, ui.button("Изменить PIN", () -> actions.password(1)));
+        ui.weighted(passwords, ui.button("Изменить пинкод", () -> actions.password(1)));
         ui.weighted(passwords, ui.button("Изменить пароль", () -> actions.password(2)));
         ui.action(
             passwords,
@@ -65,7 +65,7 @@ public final class SettingsScreen {
       }
       ui.body.addView(
           ui.text(
-              "Пароль хранится зашифрованным PIN-кодом. После ввода PIN замок работает 3 минуты без"
+              "Пароль хранится зашифрованным пинкодом. После его ввода замок работает 3 минуты без"
                   + " повторного запроса.",
               12,
               Ui.MUTED));

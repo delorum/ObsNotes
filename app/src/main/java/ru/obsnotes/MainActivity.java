@@ -1493,7 +1493,7 @@ public final class MainActivity extends AppCompatActivity {
         () -> {
           char[] password = passwords.session.copy();
           if (password == null) {
-            ui.error("Введите PIN снова");
+            ui.error("Введите пинкод снова");
             return;
           }
           work(
@@ -1518,13 +1518,12 @@ public final class MainActivity extends AppCompatActivity {
       return;
     }
     String selectedVault = vault;
-    PasswordDialogs.pin(
+    PasswordDialogs.unlock(
         ui,
-        "PIN шифрования",
-        pin ->
+        unlockPassword ->
             work(
                 () -> {
-                  passwords.unlock(selectedVault, pin);
+                  passwords.unlock(selectedVault, unlockPassword);
                   if (destroying || isDestroyed()) passwords.close();
                   return true;
                 },
