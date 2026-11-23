@@ -93,6 +93,85 @@ public class WorkDailyTest {
     assertEquals(1, new DaySearch(all).result("Работа").sections().size());
   }
 
+  private static final String WORK_HINT = "*Выделяй жирным шрифтом важное!*";
+
+  private static DayOutline.Section workSection(Markdown work, DayContentRules rules) {
+    return WorkDaily.outline(List.of(), new WorkDaily.Note(WORK, work), rules).get(0);
+  }
+
+  @Test
+  public void workHintAloneIsNeitherVisibleNorCounted() {
+    for (String eol : List.of("\n", "\r\n")) {
+      var doc = new Markdown(WorkDaily.EVENTS + eol + eol + "  " + WORK_HINT + "  " + eol);
+      var work = workSection(doc, DayContentRules.EMPTY);
+      assertEquals(0, work.count());
+      assertEquals(0, work.children().get(0).count());
+      assertTrue(work.children().get(0).items().isEmpty());
+      assertTrue(doc.text.contains(WORK_HINT));
+      assertFalse(DayContentRules.EMPTY.excluded(WORK_HINT));
+    }
+  }
+
+  @Test
+  public void mixedWorkBlockFiltersHintAndExistingRulesWithoutChangingSourceOffsets() {
+    var doc =
+        new Markdown(
+            WorkDaily.EVENTS
+                + "\n\nBefore\n"
+                + WORK_HINT
+                + "\nOldHint\nServiceToken hidden\nAfter\n");
+    var rules = new DayContentRules(List.of("OldHint"), List.of("ServiceToken"));
+    var work = workSection(doc, rules);
+    var events = work.children().get(0);
+    assertEquals(1, work.count());
+    assertEquals(1, events.items().size());
+    var item = events.items().get(0);
+    assertEquals("Before\nAfter", item.view().text());
+    assertSame(doc.blocks.get(0), item.original());
+    assertEquals(WORK, item.path());
+    assertEquals(
+        List.of(0, item.original().text().indexOf("After")),
+        item.view().lines().stream().map(MarkdownLines.Line::start).toList());
+    assertEquals(Set.of("OldHint"), rules.excludedLines());
+    assertEquals(WORK_HINT, rules.view(WORK_HINT).text());
+  }
+
+  @Test
+  public void workHintFilterKeepsEmbeddedTextAndFencedCode() {
+    var doc =
+        new Markdown(
+            WorkDaily.EVENTS
+                + "\n\n"
+                + WORK_HINT
+                + "\n\nPrefix "
+                + WORK_HINT
+                + "\n\n```text\n"
+                + WORK_HINT
+                + "\n```\n");
+    var work = workSection(doc, DayContentRules.EMPTY);
+    assertEquals(2, work.count());
+    var items = work.children().get(0).items();
+    assertEquals(2, items.size());
+    assertEquals("Prefix " + WORK_HINT, items.get(0).view().text());
+    assertTrue(items.get(1).view().text().contains(WORK_HINT));
+  }
+
+  @Test
+  public void editingVisibleWorkEventKeepsHiddenHintAndPhysicalOffsets() {
+    var doc = new Markdown(WorkDaily.EVENTS + "\r\n\r\n" + WORK_HINT + "\r\n\r\nActual event\r\n");
+    var item = workSection(doc, DayContentRules.EMPTY).children().get(0).items().get(0);
+    assertEquals("Actual event", item.view().text());
+    var state =
+        WorkDaily.editor(DAY, DAILY, new WorkDaily.Note(WORK, doc), item.original(), TEMPLATE);
+    state.enableParts(TEMPLATE);
+    assertTrue(plan(state, doc).isEmpty());
+    state.edit("Changed event");
+    var changes = plan(state, doc);
+    assertEquals(1, changes.size());
+    assertEquals(WORK, changes.get(0).path());
+    assertEquals(doc.text.replace("Actual event", "Changed event"), changes.get(0).after());
+  }
+
   @Test
   public void catalogOffersWorkOnlyWhenAvailableAndNeverAsAdditionalRoute() {
     assertFalse(new Routing.Catalog(DAILY, TEMPLATE).choices.contains(WorkDaily.choice()));

@@ -121,11 +121,14 @@ public final class WorkDaily {
       List<DayOutline.Section> original, Note note, DayContentRules rules) {
     if (note == null) return original;
     var section = note.document().section(EVENTS);
+    Set<String> excluded = new HashSet<>(rules.excludedLines());
+    excluded.add("*Выделяй жирным шрифтом важное!*");
+    var workRules = new DayContentRules(excluded, rules.excludedContains());
     List<DayContentRules.Item> items = new ArrayList<>();
     if (section != null)
       for (var block : note.document().blocks)
         if (block.section().heading().equals(EVENTS)) {
-          var view = rules.view(block.text());
+          var view = workRules.view(block.text());
           if (!view.raw().isBlank())
             items.add(new DayContentRules.Item(block, false, view, note.path()));
         }
