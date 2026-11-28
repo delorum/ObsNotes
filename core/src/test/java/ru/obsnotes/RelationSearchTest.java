@@ -32,24 +32,32 @@ public class RelationSearchTest {
     assertEquals("event-root", Events.rootId(state.rootReplacement));
   }
 
-  private static final String TODAY = DiaryLayout.path(LocalDate.of(2026, 11, 15));
-  private static final String PAST = DiaryLayout.path(LocalDate.of(2026, 11, 14));
-  private static final String OLDER = DiaryLayout.path(LocalDate.of(2026, 11, 13));
+  private static final LocalDate DAY = LocalDate.of(2026, 11, 15);
+  private static final String TODAY = DiaryLayout.path(DAY);
+  private static final String PAST = DiaryLayout.path(DAY.minusDays(1));
+  private static final String FUTURE = DiaryLayout.path(DAY.plusDays(1));
+  private static final String OLDER = DiaryLayout.path(DAY.minusDays(3));
+  private static final String LATER = DiaryLayout.path(DAY.plusDays(4));
   private static final String ROOT = Events.root("Root ^event-root");
+  private static final Events.Parent TARGET = new Events.Parent(TODAY, "event-root");
 
   private static String doc(String body) {
     return "## Заметки\n\n" + body + "\n";
   }
 
-  private static String link(String target, String id) {
-    return "[[" + target.replaceFirst("\\.md$", "") + "#^" + id + "|Root]]\nAddition";
+  private static String link(String target, String id, String body) {
+    return "[[" + target.replaceFirst("\\.md$", "") + "#^" + id + "|Root]]\n" + body;
+  }
+
+  private static String child(String body) {
+    return link(TODAY, TARGET.id(), body);
   }
 
   private static final class Storage implements VaultStorage {
     final Map<String, String> files = new LinkedHashMap<>();
     final List<String> reads = new ArrayList<>();
-    boolean enumerationAllowed = false;
-    int enumerations = 0;
+    final List<String> listed = new ArrayList<>();
+    int enumerations;
     Runnable onRead = () -> {};
     Runnable onEnumerate = () -> {};
 
@@ -65,212 +73,210 @@ public class RelationSearchTest {
     }
 
     public List<String> dailyNotes() {
-      assertTrue("Unexpected archive enumeration", enumerationAllowed);
       enumerations++;
       onEnumerate.run();
-      return new ArrayList<>(files.keySet());
+      return listed.isEmpty() ? new ArrayList<>(files.keySet()) : listed;
     }
   }
 
-  private static List<RelationSearch.Snapshot> run(Storage storage, String text, String source)
+  private static List<RelationSearch.Update> run(Storage storage, Events.Parent root)
       throws IOException {
-    List<RelationSearch.Snapshot> updates = new ArrayList<>();
-    RelationSearch.run(storage, TODAY, text, source, () -> false, updates::add);
+    List<RelationSearch.Update> updates = new ArrayList<>();
+    RelationSearch.run(storage, root, DAY, () -> false, updates::add);
     return updates;
   }
 
+  private static List<RelationSearch.Related> additions(List<RelationSearch.Update> updates) {
+    return updates.stream().flatMap(update -> update.additions().stream()).toList();
+  }
+
   @Test
-  public void unlinkedBlockDoesNotReadOrEnumerateAnything() throws IOException {
+  public void ordinaryAndInlineReferencesDoNotStartASearch() {
     for (String text :
         List.of(
             "Ordinary note",
             "Ordinary note ^event-root",
             "[[Another page]]\nNote",
-            "Text\n" + link(PAST, "event-root"))) {
-      Storage storage = new Storage();
-      var updates = run(storage, text, doc(text));
-      assertEquals(1, updates.size());
-      assertTrue(updates.get(0).complete());
-      assertTrue(updates.get(0).items().isEmpty());
-      assertTrue(storage.reads.isEmpty());
-      assertEquals(0, storage.enumerations);
-    }
-  }
-
-  @Test
-  public void anchorNeedsMatchingRelationshipCallout() {
-    assertEquals("event-root", Events.rootId(ROOT));
+            "Text\n" + child("Addition"),
+            "Note ^event-root\n> [!info]\n> ```dataviewjs\n> unrelated();\n> ```",
+            "Note\n> [!info]\n> ```dataviewjs\n"
+                + "> await dv.view(\"Скрипты/Dataview/outLinkInfo\", \"event-root\");\n> ```"))
+      assertTrue(RelationSearch.roots(TODAY, text).isEmpty());
     assertEquals("event-root", Events.rootId(ROOT.replace("\n", "\r\n")));
-    assertFalse(
-        Events.hasRelations(
-            TODAY, "Note ^event-root\n> [!info]\n> ```dataviewjs\n> unrelated();\n> ```"));
-    assertFalse(
-        Events.hasRelations(
-            TODAY,
-            "Note\n"
-                + "> [!info]\n"
-                + "> ```dataviewjs\n"
-                + "> await dv.view(\"Скрипты/Dataview/outLinkInfo\", \"event-root\");\n"
-                + "> ```"));
   }
 
   @Test
-  public void sameDayAdditionResolvesItsRootWithoutAnyStorageAccess() throws IOException {
-    Storage storage = new Storage();
-    String addition = link(TODAY, "event-root");
-    var updates = run(storage, addition, doc(ROOT + "\n\n" + addition));
-    var result = updates.get(updates.size() - 1);
-    assertTrue(result.complete());
-    assertEquals(1, result.items().size());
-    assertEquals("event-root", Events.id(result.items().get(0).block().text()));
-    assertTrue(storage.reads.isEmpty());
-    assertEquals(0, storage.enumerations);
+  public void rootAndChildUseTheSameTargetAndResults() throws IOException {
+    var storage = new Storage();
+    storage.files.put(TODAY, doc(ROOT + "\n\n" + link("", TARGET.id(), "Local child")));
+    storage.files.put(FUTURE, doc(child("Future child")));
+    storage.files.put(PAST, doc(link(DiaryLayout.name(DAY), TARGET.id(), "Past child")));
+    var own = RelationSearch.roots(TODAY, ROOT).get(0).target();
+    var parent = RelationSearch.roots(PAST, child("Past child")).get(0).target();
+    assertEquals(TARGET, own);
+    assertEquals(own, parent);
+    var updates = run(storage, own);
+    assertEquals(updates, run(storage, parent));
+    assertEquals("Root", updates.get(0).root().preview());
+    assertEquals(
+        List.of("Local child", "Past child", "Future child"),
+        additions(updates).stream().map(RelationSearch.Related::preview).toList());
   }
 
   @Test
-  public void namedDailyRootResolvesByExactDatePathAndReadsOnlyThatFile() throws IOException {
-    Storage storage = new Storage();
-    storage.files.put(PAST, doc(ROOT));
-    String addition = link("2026-11-14-сб", "event-root");
-    var updates = run(storage, addition, doc(addition));
-    assertEquals(List.of(PAST), storage.reads);
-    assertEquals(0, storage.enumerations);
-    assertEquals(1, updates.get(updates.size() - 1).items().size());
+  public void readsExistingDaysNearestRootFirstInBothDirectionsAndOnlyOnce() throws IOException {
+    var storage = new Storage();
+    storage.files.put(LATER, doc(child("Later")));
+    storage.files.put(FUTURE, doc(child("Tomorrow")));
+    storage.files.put(TODAY, doc(ROOT + "\n\n" + child("Same day")));
+    storage.files.put(OLDER, doc(child("Older")));
+    storage.files.put(PAST, doc(child("Yesterday") + "\n\n" + child("Second that day")));
+    storage.listed.addAll(storage.files.keySet());
+    storage.listed.add(FUTURE);
+    var updates = new ArrayList<RelationSearch.Update>();
+    storage.onEnumerate =
+        () -> {
+          assertEquals(List.of(TODAY), storage.reads);
+          assertEquals("Root", updates.get(0).root().preview());
+          assertEquals("Same day", updates.get(0).additions().get(0).preview());
+        };
+    // The date the viewer came from must not affect archive order.
+    RelationSearch.run(storage, TARGET, DAY.plusDays(4), () -> false, updates::add);
+    assertEquals(List.of(TODAY, PAST, FUTURE, OLDER, LATER), storage.reads);
+    assertEquals(1, storage.enumerations);
+    assertEquals(
+        List.of("Same day", "Yesterday", "Second that day", "Tomorrow", "Older", "Later"),
+        additions(updates).stream().map(RelationSearch.Related::preview).toList());
+    assertEquals(4, updates.get(updates.size() - 1).checked());
+    assertTrue(updates.get(updates.size() - 1).complete());
   }
 
   @Test
-  public void explicitRootPathAlsoAvoidsArchiveEnumeration() throws IOException {
-    Storage storage = new Storage();
-    storage.files.put(PAST, doc(ROOT));
-    var updates = run(storage, link(PAST, "event-root"), doc("Current note"));
-    assertEquals(List.of(PAST), storage.reads);
-    assertEquals(PAST, updates.get(updates.size() - 1).items().get(0).path());
+  public void rootsKeepTheLocalRootFirstAndExposeOtherParentsOnceInLinkOrder() {
+    String text = link(PAST, "first", "") + link(FUTURE, "second", "") + link(PAST, "first", ROOT);
+    var roots = RelationSearch.roots(TODAY, text);
+    assertEquals(
+        List.of(TARGET, new Events.Parent(PAST, "first"), new Events.Parent(FUTURE, "second")),
+        roots.stream().map(RelationSearch.RootChoice::target).toList());
   }
 
   @Test
-  public void localWikiRootIsResolvedInItsOwnFile() throws IOException {
-    Storage storage = new Storage();
-    var updates = run(storage, "[[#^event-root|Root]]\nAddition", doc(ROOT));
-    assertEquals(1, updates.get(updates.size() - 1).items().size());
-    assertTrue(storage.reads.isEmpty());
-    assertFalse(Events.references("[[#^event-root]]\nOther", PAST, TODAY, "event-root"));
-  }
-
-  @Test
-  public void rootPublishesLocalChildrenBeforeArchiveAndAddsRemoteMatches() throws IOException {
-    Storage storage = new Storage();
-    storage.enumerationAllowed = true;
+  public void requiresMatchingAnchorAndPathAndIncludesNonFirstReferences() throws IOException {
+    var storage = new Storage();
     storage.files.put(TODAY, doc(ROOT));
-    storage.files.put(PAST, doc(link(TODAY, "event-root")));
-    storage.files.put(OLDER, doc("Unrelated"));
-    List<RelationSearch.Snapshot> updates = new ArrayList<>();
-    storage.onEnumerate = () -> assertEquals(1, updates.get(0).items().size());
-    RelationSearch.run(
-        storage,
-        TODAY,
-        ROOT,
-        doc(ROOT + "\n\n" + link(TODAY, "event-root")),
-        () -> false,
-        updates::add);
-    assertEquals(List.of(PAST, OLDER), storage.reads);
+    storage.files.put(
+        PAST,
+        doc(
+            link("", TARGET.id(), "Local to another file")
+                + "\n\n"
+                + link(TODAY, TARGET.id() + "-suffix", "Other id")
+                + "\n\n"
+                + "Inline "
+                + child("Ignored")
+                + "\n\n"
+                + "```md\n"
+                + child("Inside code")
+                + "\n```"
+                + "\n\n"
+                + link("", "other", child("Two parents"))));
+    assertEquals(
+        List.of("Two parents"),
+        additions(run(storage, TARGET)).stream().map(RelationSearch.Related::preview).toList());
+  }
+
+  @Test
+  public void exactExternalRootPathIsResolvedBeforeTheArchive() throws IOException {
+    String external = "События/Корень.md";
+    Storage storage = new Storage();
+    storage.files.put(external, doc(ROOT));
+    storage.files.put(TODAY, doc(link(external, TARGET.id(), "Addition")));
+    var updates =
+        run(
+            storage,
+            RelationSearch.roots(TODAY, link(external, TARGET.id(), "Addition")).get(0).target());
+    assertEquals(List.of(external, TODAY), storage.reads);
+    assertEquals(external, updates.get(0).root().path());
+    assertEquals("Addition", additions(updates).get(0).preview());
+  }
+
+  @Test
+  public void missingOrUnpersistedRootDoesNotEnumerateTheArchive() throws IOException {
+    Storage storage = new Storage();
+    assertThrows(FileNotFoundException.class, () -> run(storage, TARGET));
+    storage.files.put(TODAY, doc("Plain anchor ^event-root"));
+    var updates = run(storage, TARGET);
+    assertNull(updates.get(0).root());
+    assertTrue(updates.get(0).complete());
+    assertEquals(0, storage.enumerations);
+  }
+
+  @Test
+  public void inaccessibleArchiveFileDoesNotStopTheSearch() throws IOException {
+    Storage storage = new Storage();
+    storage.files.put(TODAY, doc(ROOT));
+    storage.files.put(FUTURE, doc(child("Still readable")));
+    storage.listed.addAll(List.of(TODAY, PAST, FUTURE));
+    var updates = run(storage, TARGET);
     var result = updates.get(updates.size() - 1);
     assertTrue(result.complete());
-    assertEquals(2, result.items().size());
+    assertEquals(1, result.unreadable());
     assertEquals(2, result.checked());
+    assertEquals("Still readable", additions(updates).get(0).preview());
   }
 
   @Test
   public void cancellationBeforeStartDoesNoWork() throws IOException {
     Storage storage = new Storage();
-    RelationSearch.run(storage, TODAY, ROOT, doc(ROOT), () -> true, result -> fail("Late result"));
+    RelationSearch.run(storage, TARGET, DAY, () -> true, result -> fail("Late result"));
     assertTrue(storage.reads.isEmpty());
     assertEquals(0, storage.enumerations);
   }
 
   @Test
-  public void cancellationDuringReadStopsBeforeNextFileAndSuppressesLateResults()
+  public void closingAfterTheRootAvoidsArchiveEnumeration() throws IOException {
+    Storage storage = new Storage();
+    storage.files.put(TODAY, doc(ROOT));
+    AtomicBoolean cancelled = new AtomicBoolean();
+    RelationSearch.run(storage, TARGET, DAY, cancelled::get, result -> cancelled.set(true));
+    assertEquals(0, storage.enumerations);
+  }
+
+  @Test
+  public void cancellationDuringArchiveReadStopsBeforeNextFileAndSuppressesLateResults()
       throws IOException {
     Storage storage = new Storage();
-    storage.enumerationAllowed = true;
-    storage.files.put(PAST, doc(link(TODAY, "event-root")));
-    storage.files.put(OLDER, doc(link(TODAY, "event-root")));
+    storage.files.put(TODAY, doc(ROOT));
+    storage.files.put(PAST, doc(child("Past")));
+    storage.files.put(FUTURE, doc(child("Future")));
     AtomicBoolean cancelled = new AtomicBoolean();
-    storage.onRead = () -> cancelled.set(true);
-    List<RelationSearch.Snapshot> updates = new ArrayList<>();
-    RelationSearch.run(storage, TODAY, ROOT, doc(ROOT), cancelled::get, updates::add);
-    assertEquals(List.of(PAST), storage.reads);
+    storage.onRead =
+        () -> {
+          if (storage.reads.size() > 1) cancelled.set(true);
+        };
+    List<RelationSearch.Update> updates = new ArrayList<>();
+    RelationSearch.run(storage, TARGET, DAY, cancelled::get, updates::add);
+    assertEquals(List.of(TODAY, PAST), storage.reads);
     assertEquals(1, updates.size());
     assertFalse(updates.get(0).complete());
   }
 
   @Test
-  public void closingAfterLocalResultsAvoidsArchiveEnumeration() throws IOException {
-    Storage storage = new Storage();
-    AtomicBoolean cancelled = new AtomicBoolean();
-    RelationSearch.run(
-        storage, TODAY, ROOT, doc(ROOT), cancelled::get, result -> cancelled.set(true));
-    assertEquals(0, storage.enumerations);
+  public void opensCurrentBlockAfterOffsetsChangeAndRejectsAmbiguousOrRemovedChildren() {
+    String child = child("Original");
+    Markdown before = new Markdown(doc(child));
+    var selected = new RelationSearch.Related(PAST, before.blocks.get(0));
+    Markdown shifted = new Markdown(doc("Before\n\n" + child));
+    assertEquals(
+        shifted.blocks.get(1), RelationSearch.currentBlock(shifted, selected).orElseThrow());
+    Markdown duplicates = new Markdown(doc("Before\n\n" + child + "\n\n" + child));
+    assertTrue(RelationSearch.currentBlock(duplicates, selected).isEmpty());
+    assertTrue(RelationSearch.currentBlock(new Markdown(doc("New text")), selected).isEmpty());
   }
 
   @Test
-  public void unsavedNewRootDoesNotSearchForImpossibleBackLinks() throws IOException {
-    Storage storage = new Storage();
-    var updates = run(storage, ROOT, doc("Before adding an event anchor"));
-    assertTrue(updates.get(updates.size() - 1).complete());
-    assertEquals(0, storage.enumerations);
-  }
-
-  @Test
-  public void inaccessibleDirectParentFinishesWithAReadablePartialResult() throws IOException {
-    Storage storage = new Storage();
-    var updates = run(storage, link(PAST, "event-root"), doc("Addition"));
-    var result = updates.get(updates.size() - 1);
-    assertTrue(result.complete());
-    assertEquals(1, result.unreadable());
-    assertTrue(result.items().isEmpty());
-    assertEquals(0, storage.enumerations);
-  }
-
-  @Test
-  public void parentAndChildMatchIsNotDuplicated() throws IOException {
-    Storage storage = new Storage();
-    storage.enumerationAllowed = true;
-    String both = link(TODAY, "event-child") + " ^event-root";
-    storage.files.put(PAST, doc(both));
-    String query =
-        link(PAST, "event-root")
-            + " ^event-child\n"
-            + "> [!info]\n"
-            + "> ```dataviewjs\n"
-            + "> await dv.view(\"Скрипты/Dataview/outLinkInfo\", \"event-child\");\n"
-            + "> ```";
-    var updates = run(storage, query, doc(query));
-    assertEquals(1, updates.get(updates.size() - 1).items().size());
-    assertEquals(List.of(PAST), storage.reads);
-  }
-
-  @Test
-  public void multipleParentsReadEachExactFileOnceAndFindSecondaryReferences() throws IOException {
-    Storage storage = new Storage();
-    storage.files.put(PAST, doc(ROOT + "\n\n" + Events.root("Second ^second")));
-    storage.files.put(OLDER, doc(Events.root("Third ^third")));
-    String text =
-        "[[2026-11-14-сб#^event-root|One]]\n"
-            + "[[2026-11-14-сб#^second|Two]]\n[[2026-11-13-пт#^third|Three]]\nChild";
-    var updates = run(storage, text, doc(text));
-    var last = updates.get(updates.size() - 1);
-    assertEquals(List.of(PAST, OLDER), storage.reads);
-    assertEquals(0, storage.enumerations);
-    assertEquals(3, last.items().size());
-    assertTrue(last.complete());
-  }
-
-  @Test
-  public void rootFindsChildWhenItsLinkIsSecond() throws IOException {
-    Storage storage = new Storage();
-    storage.enumerationAllowed = true;
-    storage.files.put(PAST, doc("[[#^other|Other]]\n" + link(TODAY, "event-root")));
-    var updates = run(storage, ROOT, doc(ROOT));
-    assertEquals(1, updates.get(updates.size() - 1).items().size());
+  public void opensUpdatedRootByItsUniqueAnchor() {
+    var old = new RelationSearch.Related(TODAY, new Markdown(doc(ROOT)).blocks.get(0));
+    var current = new Markdown(doc("Before\n\n" + ROOT.replace("Root ^", "Edited ^")));
+    assertEquals(current.blocks.get(1), RelationSearch.currentBlock(current, old).orElseThrow());
   }
 }

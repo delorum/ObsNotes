@@ -47,7 +47,8 @@ public final class MainActivity extends AppCompatActivity {
   private final ExecutorService relationIo = Executors.newSingleThreadExecutor();
   private java.util.concurrent.atomic.AtomicBoolean relationCancelled;
   private Future<?> relationJob;
-  private RelationsDialog relationsDialog;
+  private RelationsScreen relationsScreen;
+  private Events.Parent shownRoot, preferredRoot;
   private final Handler handler = new Handler(Looper.getMainLooper());
   private String vault = "", path = "", screen = "day", lastError;
   private LocalDate day = LocalDate.now();
@@ -126,7 +127,8 @@ public final class MainActivity extends AppCompatActivity {
             new OnBackPressedCallback(true) {
               public void handleOnBackPressed() {
                 if (busy) return;
-                if (screen.equals("section-visibility")) showSettings();
+                if (screen.equals("relations")) closeRelations();
+                else if (screen.equals("section-visibility")) showSettings();
                 else if (!screen.equals("day")) home();
                 else {
                   setEnabled(false);
@@ -180,7 +182,6 @@ public final class MainActivity extends AppCompatActivity {
     weatherIo.shutdownNow();
     if (conflictDialog != null) conflictDialog.dismiss();
     handler.removeCallbacksAndMessages(null);
-    if (relationsDialog != null) relationsDialog.dismiss();
     cancelRelations();
     relationIo.shutdownNow();
     cancelNavigation();
@@ -309,7 +310,12 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void today() {
-    if (editor != null) saveEditor(() -> navigateTo(LocalDate.now(), false));
+    if (editor != null)
+      saveEditor(
+          () -> {
+            showDay();
+            navigateTo(LocalDate.now(), false);
+          });
     else navigateTo(LocalDate.now(), false);
   }
 
@@ -430,6 +436,8 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void showDay() {
+    releaseRelationsScreen();
+    preferredRoot = null;
     screen = "day";
     nextDayButton =
         DayScreen.show(
@@ -721,6 +729,7 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void showEditor() {
+    releaseRelationsScreen();
     cancelNavigation();
     editor.initializeRoutes(template);
     editor.enableParts(template);
@@ -1117,64 +1126,148 @@ public final class MainActivity extends AppCompatActivity {
   private void cancelRelations() {
     if (relationCancelled != null) relationCancelled.set(true);
     if (relationJob != null) relationJob.cancel(true);
+    relationCancelled = null;
+    relationJob = null;
+  }
+
+  private void releaseRelationsScreen() {
+    if (relationsScreen == null) return;
+    cancelRelations();
+    relationsScreen = null;
+    shownRoot = null;
+  }
+
+  private void closeRelations() {
+    if (busy) return;
+    preferredRoot = shownRoot;
+    if (editor != null) showEditor();
+    else home();
   }
 
   private void showRelations() {
     if (busy || editor == null) return;
-    String source = editor.sourcePath,
-        text = editor.activePart().text,
-        snapshot = editor.sourceSnapshot;
-    if (!Events.hasRelations(source, text)) {
-      Toast.makeText(this, "У блока нет связей", Toast.LENGTH_SHORT).show();
+    List<RelationSearch.RootChoice> choices = RelationSearch.roots(editor);
+    if (choices.isEmpty()) {
+      boolean pending =
+          editor.parts != null
+              && (editor.parts.isRoot(editor.parts.selected)
+                  || !editor.parts.references(editor.parts.selected).isEmpty());
+      Toast.makeText(
+              this,
+              pending ? "Сохраните связь, чтобы её открыть" : "У блока нет связей",
+              Toast.LENGTH_SHORT)
+          .show();
       return;
     }
-    if (relationsDialog != null) relationsDialog.dismiss();
+    stopWeatherInEditor();
+    cancelNavigation();
+    Events.Parent root =
+        choices.stream().anyMatch(choice -> choice.target().equals(preferredRoot))
+            ? preferredRoot
+            : choices.get(0).target();
+    screen = "relations";
+    relationsScreen =
+        new RelationsScreen(
+            ui, choices, root, this::closeRelations, this::findAdditions, this::editRelated);
+    findAdditions(root);
+  }
+
+  private void findAdditions(Events.Parent root) {
+    if (busy || relationsScreen == null || root.equals(shownRoot)) return;
     cancelRelations();
+    shownRoot = root;
+    RelationsScreen target = relationsScreen;
+    target.reset();
     var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
     relationCancelled = cancelled;
-    var dialog =
-        new RelationsDialog(
-            ui,
-            () -> {
-              cancelled.set(true);
-              if (relationCancelled == cancelled && relationJob != null) relationJob.cancel(true);
-            },
-            selected ->
-                new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                    .setTitle(selected.block().section().title())
-                    .setMessage(CrossReferences.clean(selected.block().text()))
-                    .setPositiveButton("Закрыть", null)
-                    .show());
-    relationsDialog = dialog;
     SafVaultStorage selectedStorage = storage;
+    LocalDate sourceDay = day;
     relationJob =
         relationIo.submit(
             () -> {
               try {
                 RelationSearch.run(
                     selectedStorage,
-                    source,
-                    text,
-                    snapshot,
+                    root,
+                    sourceDay,
                     () -> cancelled.get() || Thread.currentThread().isInterrupted(),
                     result ->
                         runOnUiThread(
                             () -> {
-                              if (!isDestroyed() && !cancelled.get()) dialog.update(result);
+                              if (!isDestroyed() && !cancelled.get()) target.update(result);
                             }));
               } catch (Exception error) {
                 if (!cancelled.get())
                   runOnUiThread(
                       () -> {
                         if (!isDestroyed() && !cancelled.get())
-                          dialog.failed(
-                              "Поиск не завершён: "
-                                  + (error.getMessage() == null
-                                      ? "файл недоступен"
-                                      : error.getMessage()));
+                          target.failed(DayNavigation.message(error));
                       });
               }
             });
+  }
+
+  private record RelatedEditor(
+      LocalDate day, Markdown note, Markdown.Block block, WorkState work) {}
+
+  private void editRelated(RelationSearch.Related selected) {
+    if (busy || relationsScreen == null) return;
+    LocalDate selectedDay;
+    try {
+      selectedDay = RelativeDates.date(selected.path());
+      if (!DiaryLayout.path(selectedDay).equals(selected.path()))
+        throw new IllegalArgumentException();
+    } catch (DateTimeException | IndexOutOfBoundsException | IllegalArgumentException invalid) {
+      ui.error("Для редактирования откройте дневную заметку");
+      return;
+    }
+    var root = shownRoot;
+    if (resumeRelated(selected, root)) return;
+    Runnable open = () -> openRelated(selected, selectedDay, root);
+    if (editor == null) open.run();
+    else saveEditor(open);
+  }
+
+  private boolean resumeRelated(RelationSearch.Related selected, Events.Parent root) {
+    if (editor == null || editor.parts == null) return false;
+    for (int i = 0; i < editor.parts.parts.size(); i++) {
+      var part = editor.parts.parts.get(i).form();
+      if (!part.sourcePath.equals(selected.path())
+          || part.start != selected.block().start()
+          || !part.original.equals(selected.block().text())) continue;
+      editor.parts.selectEnd(i);
+      preferredRoot = root;
+      showEditor();
+      return true;
+    }
+    return false;
+  }
+
+  private void openRelated(
+      RelationSearch.Related selected, LocalDate selectedDay, Events.Parent root) {
+    SafVaultStorage selectedStorage = storage;
+    work(
+        () -> {
+          Markdown note = new Markdown(selectedStorage.read(selected.path()));
+          Markdown.Block block =
+              RelationSearch.currentBlock(note, selected)
+                  .orElseThrow(() -> new IOException("Текстовый блок изменился"));
+          return new RelatedEditor(
+              selectedDay, note, block, readWork(selectedStorage, selectedDay));
+        },
+        opened -> {
+          releaseRelationsScreen();
+          day = opened.day();
+          path = selected.path();
+          document = opened.note();
+          setWork(opened.work());
+          checklistContext = null;
+          selection.clear();
+          sectionQuery = "";
+          expanded.add(opened.block().section().heading());
+          preferredRoot = root;
+          startEditor(opened.block(), opened.block().section().heading());
+        });
   }
 
   private void saveEditor() {
@@ -1234,9 +1327,7 @@ public final class MainActivity extends AppCompatActivity {
       conflictPending = false;
       lastError = null;
       taskViewport = null;
-      if (returnY >= 0) showDayAt(returnY);
-      else showDay();
-      if (after != null) after.run();
+      finishEditorExit(returnY, after);
       return;
     }
     recovery.save(editor, vault);
@@ -1286,10 +1377,14 @@ public final class MainActivity extends AppCompatActivity {
             workError = null;
           }
           taskViewport = null;
-          if (returnY >= 0) showDayAt(returnY);
-          else showDay();
-          if (after != null) after.run();
+          finishEditorExit(returnY, after);
         });
+  }
+
+  private void finishEditorExit(int returnY, Runnable after) {
+    if (after != null) after.run();
+    else if (returnY >= 0) showDayAt(returnY);
+    else showDay();
   }
 
   private void applyDayChange(String selectedPath, Markdown before, Work<Markdown> update) {

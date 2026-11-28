@@ -130,7 +130,7 @@ public final class Events {
     return caption(block.text());
   }
 
-  private static String caption(String text) {
+  static String caption(String text) {
     String label =
         CrossReferences.clean(text)
             .lines()
