@@ -190,18 +190,38 @@ public final class SafVaultStorage implements VaultStorage {
   @Override
   public void visitDailyNotes(BooleanSupplier cancelled, NoteVisitor visitor) throws IOException {
     if (cancelled.getAsBoolean()) return;
-    walk(resolve("Дневник/Хроника"), "Дневник/Хроника", cancelled, visitor, 0);
+    walk(resolve("Дневник/Хроника"), "Дневник/Хроника", cancelled, visitor, 6, true);
   }
 
-  private void walk(
-      Uri directory, String prefix, BooleanSupplier cancelled, NoteVisitor visitor, int depth)
+  @Override
+  public void visitMarkdownNotes(BooleanSupplier cancelled, NoteVisitor visitor)
       throws IOException {
-    if (depth > 6 || cancelled.getAsBoolean()) return;
+    var root =
+        DocumentsContract.buildDocumentUriUsingTree(
+            tree, DocumentsContract.getTreeDocumentId(tree));
+    walk(root, "", cancelled, visitor, Integer.MAX_VALUE, false);
+  }
+
+  private static final java.util.regex.Pattern DAILY_NAME =
+      java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}-[а-я]{2}\\.md");
+
+  private void walk(
+      Uri directory,
+      String prefix,
+      BooleanSupplier cancelled,
+      NoteVisitor visitor,
+      int levels,
+      boolean dailyOnly)
+      throws IOException {
+    if (levels < 0 || cancelled.getAsBoolean()) return;
     for (Entry e : children(directory)) {
       if (cancelled.getAsBoolean()) return;
-      String path = prefix + "/" + e.name;
-      if (e.directory) walk(e.uri, path, cancelled, visitor, depth + 1);
-      else if (e.name.matches("\\d{4}-\\d{2}-\\d{2}-[а-я]{2}\\.md")) visitor.visit(path);
+      if (e.name.startsWith(".")) continue;
+      String path = prefix.isEmpty() ? e.name : prefix + "/" + e.name;
+      if (e.directory) walk(e.uri, path, cancelled, visitor, levels - 1, dailyOnly);
+      else if (dailyOnly
+          ? DAILY_NAME.matcher(e.name).matches()
+          : e.name.toLowerCase(Locale.ROOT).endsWith(".md")) visitor.visit(path);
     }
   }
 }

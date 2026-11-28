@@ -60,9 +60,9 @@ final class EditorPartsScreen {
             lock.setContentDescription(locked ? "Расшифровать часть" : "Зашифровать часть");
           }
         };
+    var dateRow = new EditorDateRow(ui, owner.activePart(), actions);
     LinearLayout panels = ui.column();
     ui.body.addView(panels);
-    Routing.Catalog catalog = owner.routingCatalog(template);
     List<LinearLayout> cards = new ArrayList<>();
     List<android.view.View> noteTools = new ArrayList<>();
     Runnable[] render = new Runnable[1];
@@ -70,7 +70,9 @@ final class EditorPartsScreen {
         () -> {
           updateLock.run();
           int at = owner.parts.selectAt(Math.max(0, input.getSelectionStart()));
-          boolean simple = WorkDaily.selected(owner.parts.parts.get(at).form());
+          var activePart = owner.parts.parts.get(at).form();
+          dateRow.update(activePart);
+          boolean simple = WorkDaily.selected(activePart);
           for (var control : noteTools)
             control.setVisibility(simple ? android.view.View.GONE : android.view.View.VISIBLE);
           for (int i = 0; i < cards.size(); i++) {
@@ -144,13 +146,25 @@ final class EditorPartsScreen {
             EditorScreen.metadata(
                 ui,
                 form,
-                catalog,
+                form.routingCatalog(template),
                 chips,
                 scoped,
                 List.of(),
                 colorOffset,
                 false,
                 () -> owner.parts.parts.get(index).form());
+            if (!form.destinationPath.equals(owner.destinationPath)) {
+              Chip date =
+                  EditorScreen.chip(ui, RelativeDates.buttonLabel(form.destinationPath), Ui.INK);
+              date.setContentDescription("Дата части " + (i + 1));
+              date.setCloseIconVisible(false);
+              date.setOnClickListener(
+                  v -> {
+                    input.setSelection(owner.parts.selectEnd(index));
+                    actions.destination();
+                  });
+              chips.addView(date, 0);
+            }
             if (form.valueBound()) {
               boolean task = !form.taskShell.isEmpty();
               Chip key =
@@ -242,7 +256,7 @@ final class EditorPartsScreen {
     input.setOnFocusChangeListener(
         (v, focus) -> owner.cursor = Math.max(0, input.getSelectionStart()));
     refresh.run();
-    ui.body.addView(EditorDateRow.create(ui, owner, actions));
+    ui.body.addView(dateRow.view);
     LinearLayout tools = ui.row();
     Runnable selectCaret =
         () -> {

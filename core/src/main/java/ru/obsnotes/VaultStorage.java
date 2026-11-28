@@ -31,6 +31,11 @@ public interface VaultStorage {
     void visit(String path) throws IOException;
   }
 
+  default void visitMarkdownNotes(BooleanSupplier cancelled, NoteVisitor visitor)
+      throws IOException {
+    visitDailyNotes(cancelled, visitor);
+  }
+
   default void visitDailyNotes(BooleanSupplier cancelled, NoteVisitor visitor) throws IOException {
     if (cancelled.getAsBoolean()) return;
     for (String path : dailyNotes()) {

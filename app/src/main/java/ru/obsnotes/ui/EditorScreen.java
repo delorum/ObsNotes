@@ -133,7 +133,7 @@ public final class EditorScreen {
         break;
       }
     TextView hint = ui.text(hint(state), 12, Ui.MUTED);
-    ui.body.addView(EditorDateRow.create(ui, state, actions));
+    ui.body.addView(new EditorDateRow(ui, state, actions).view);
 
     if (state.kind == Markdown.Kind.TASK && !state.taskAppend) {
       ui.body.addView(

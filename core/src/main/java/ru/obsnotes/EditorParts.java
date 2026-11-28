@@ -146,6 +146,8 @@ public final class EditorParts {
                 && mappedStart.applyAsInt(old) > mappedStart.applyAsInt(closest)) closest = old;
           contributors.add(closest);
         }
+        if (contributors.stream().map(old -> old.form().destinationPath).distinct().count() > 1)
+          throw new IllegalArgumentException("Перед объединением выберите для частей одну дату");
         if (contributors.size() > 1 && contributors.stream().anyMatch(old -> old.form().locked()))
           throw new IllegalArgumentException("Сначала расшифруйте объединяемые части замком");
         Part origin = contributors.get(0);
@@ -621,7 +623,7 @@ public final class EditorParts {
 
   public String validateRoutes(EditorState form, List<Routing.Choice> choices) {
     if (WorkDaily.selected(choices)
-        && effectiveLinks().involved(form.partId)
+        && (effectiveLinks().involved(form.partId) || !Events.id(form.text).isEmpty())
         && !WorkDaily.selected(form))
       return "Сначала уберите связи этой части перед переносом в работу";
     if ((effectiveLinks().involved(form.partId)
@@ -687,7 +689,7 @@ public final class EditorParts {
                     : ref.raw());
       form.text = Events.withLinks(form.text, raw);
       if (!form.sourcePath.equals(form.destinationPath))
-        form.text = Events.bindLocalParents(form.sourcePath, form.text);
+        form.text = Events.bindLocalReferences(form.sourcePath, form.text);
     }
     return forms;
   }
@@ -702,76 +704,75 @@ public final class EditorParts {
       CleanupRules rules) {
     validate();
     List<EditorState> forms = savedForms().stream().map(WorkDaily::physical).toList();
-    boolean internalEvents = !effectiveLinks().rootIds().isEmpty();
-    // A single part retains the existing in-place edit and protected-anchor semantics.
-    if (parts.size() == 1 && !(internalEvents && !owner.sourcePath.equals(owner.destinationPath))) {
+    if (parts.size() == 1) {
       EditorState form = forms.get(0);
       form.edit(value);
       return VaultRepository.addRoots(
           VaultRepository.plan(
-              form, source, new Markdown(form.destinationSnapshot), template, date, now, rules),
+              form,
+              source,
+              new Markdown(form.destinationSnapshot),
+              template,
+              VaultRepository.destinationDate(form.destinationPath, date),
+              now,
+              rules),
           pendingRootEdits());
     }
-    if (!owner.fresh) owner.originalBlock(source);
+    Markdown.Block original = owner.fresh ? null : owner.originalBlock(source);
     LinkedHashMap<String, String> before = new LinkedHashMap<>(), after = new LinkedHashMap<>();
     before.put(owner.destinationPath, destination.text);
     before.put(owner.sourcePath, source.text);
     for (var form : forms) before.putIfAbsent(form.destinationPath, form.destinationSnapshot);
     after.putAll(before);
 
-    if (!owner.fresh
-        && forms.stream()
-            .allMatch(
-                f ->
-                    f.kind == Markdown.Kind.SECTION
-                        && f.destinationPath.equals(owner.sourcePath)
-                        && f.heading.equals(owner.originalBlock(source).section().heading()))) {
+    var staying =
+        original == null
+            ? List.<EditorState>of()
+            : forms.stream()
+                .filter(
+                    form ->
+                        form.kind == Markdown.Kind.SECTION
+                            && form.destinationPath.equals(owner.sourcePath)
+                            && form.heading.equals(original.section().heading()))
+                .toList();
+    if (!staying.isEmpty()) {
       StringBuilder output = new StringBuilder();
-      for (int i = 0; i < forms.size(); i++) {
+      for (int i = 0; i < staying.size(); i++) {
+        var form = staying.get(i);
         if (i > 0) {
-          var previous = forms.get(i - 1);
+          var previous = staying.get(i - 1);
           boolean adjacentFields =
               !previous.fieldPrefix.isEmpty()
-                  && !forms.get(i).fieldPrefix.isEmpty()
+                  && !form.fieldPrefix.isEmpty()
                   && !Events.hasRelations(previous.sourcePath, previous.text)
-                  && !Events.hasRelations(forms.get(i).sourcePath, forms.get(i).text);
+                  && !Events.hasRelations(form.sourcePath, form.text);
           output.append(adjacentFields ? "\n" : "\n\n");
         }
-        output.append(forms.get(i).savedText());
+        String text = form.savedText();
+        if (i == 0
+            && form != forms.get(0)
+            && form.origins.isEmpty()
+            && form.heading.equals("## Заметки"))
+          text = VaultRepository.withTimestamp(source, owner.sourcePath, text, now);
+        output.append(text);
       }
-      String joined = output.toString();
-      List<VaultRepository.Change> changes =
-          List.of(
-              new VaultRepository.Change(
-                  owner.sourcePath,
-                  source.text,
-                  source.replace(owner.originalBlock(source), joined).text));
-      return VaultRepository.addRoots(changes, pendingRootEdits());
+      after.put(owner.sourcePath, source.replace(original, output.toString()).text);
+      if (staying.size() == forms.size())
+        return VaultRepository.addRoots(
+            List.of(
+                new VaultRepository.Change(
+                    owner.sourcePath, source.text, after.get(owner.sourcePath))),
+            pendingRootEdits());
     }
-    boolean relocatedGroup = internalEvents && !owner.sourcePath.equals(owner.destinationPath);
-    if (relocatedGroup && !owner.fresh) {
-      if ((!Events.id(owner.original).isEmpty()
-              && !owner.removedRoots.contains(
-                  new Events.Parent(owner.sourcePath, Events.id(owner.original))))
-          || forms.stream().anyMatch(f -> f.text.contains("[[#^")))
-        throw new IllegalArgumentException(
-            "Корневой блок нельзя переносить между днями: ссылки должны сохранить адрес.");
-      after.put(owner.sourcePath, source.replace(owner.originalBlock(source), "").text);
-    }
-    boolean firstPart = true;
+    boolean replaceOriginal = staying.isEmpty() && !owner.fresh;
+    Set<EditorState> atOrigin = Set.copyOf(staying);
     for (EditorState form : forms) {
-      if (!owner.sourcePath.equals(owner.destinationPath)
-          && ((!Events.id(owner.original).isEmpty()
-                  && !owner.removedRoots.contains(
-                      new Events.Parent(owner.sourcePath, Events.id(owner.original))))
-              || forms.stream().anyMatch(f -> f.text.contains("[[#^"))))
-        throw new IllegalArgumentException(
-            "Корневой блок нельзя переносить между днями: ссылки должны сохранить адрес.");
-      form.fresh = firstPart && !relocatedGroup ? owner.fresh : true;
+      if (atOrigin.contains(form)) continue;
+      form.fresh = !replaceOriginal;
       form.original = owner.original;
       form.start = owner.start;
       form.end = owner.end;
-      form.sourcePath = firstPart && !relocatedGroup ? owner.sourcePath : owner.destinationPath;
+      form.sourcePath = replaceOriginal ? owner.sourcePath : form.destinationPath;
       form.parts = null;
       form.rootPath = ""; // Merge pending root edits once, after every paragraph insertion.
       Markdown current = new Markdown(after.get(form.destinationPath));
@@ -796,13 +797,13 @@ public final class EditorParts {
               new Markdown(after.get(form.sourcePath)),
               current,
               template,
-              date,
+              VaultRepository.destinationDate(form.destinationPath, date),
               now,
               CleanupRules.EMPTY)) {
         before.putIfAbsent(change.path(), change.before());
         after.put(change.path(), change.after());
       }
-      firstPart = false;
+      replaceOriginal = false;
     }
     List<VaultRepository.Change> result = new ArrayList<>();
     List<String> writeOrder = new ArrayList<>(before.keySet());

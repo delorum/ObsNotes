@@ -156,20 +156,75 @@ public final class Events {
     return links.isEmpty() ? body : String.join(eol, links) + eol + body;
   }
 
-  /** Give leading local links the original file address before moving the block. */
-  static String bindLocalParents(String source, String text) {
+  static String bindLocalReferences(String source, String text) {
     if (source.isEmpty() || !text.contains("[[#^")) return text;
-    Matcher links = LINK.matcher(prefix(source, text).raw());
-    String path = source.endsWith(".md") ? source.substring(0, source.length() - 3) : source;
+    String path = fileTarget(source);
+    return rewriteTargets(text, (target, id) -> target.isEmpty() ? path : target);
+  }
+
+  static String retarget(String source, String text, Map<Parent, Parent> moves) {
+    return rewriteTargets(
+        text,
+        (target, id) -> {
+          Parent address = resolve(source, target, id);
+          Parent moved = address == null ? null : moves.get(address);
+          return moved == null ? target : fileTarget(moved.path());
+        });
+  }
+
+  private static String fileTarget(String path) {
+    return path.endsWith(".md") ? path.substring(0, path.length() - 3) : path;
+  }
+
+  private static final Pattern INLINE_CODE = Pattern.compile("(?<!`)(`++)(?!`).*?(?<!`)\\1(?!`)");
+  private static final Pattern QUOTED_FENCE = Pattern.compile("^(`{3,}|~{3,})(.*)$");
+
+  private static String rewriteTargets(
+      String text, java.util.function.BiFunction<String, String, String> targetFor) {
+    if (!text.contains("#^")) return text;
     StringBuilder result = new StringBuilder();
-    int cursor = 0;
-    while (links.find()) {
-      if (!links.group(1).isEmpty()) continue;
-      int target = links.start(1);
-      result.append(text, cursor, target).append(path);
-      cursor = target;
+    int copied = 0;
+    String quotedFence = "";
+    for (var line : MarkdownLines.scan(text)) {
+      if (line.literal()) continue;
+      String value = line.text();
+      String content = value.stripLeading();
+      if (!content.startsWith(">")) quotedFence = "";
+      else if (!quotedFence.isEmpty() || value.indexOf('`') >= 0 || value.indexOf('~') >= 0) {
+        int start = value.length() - content.length();
+        while (start < value.length() && value.charAt(start) == '>') {
+          start++;
+          while (start < value.length() && Character.isWhitespace(value.charAt(start))) start++;
+        }
+        var fence = QUOTED_FENCE.matcher(value).region(start, value.length());
+        if (fence.matches()) {
+          String delimiter = fence.group(1);
+          if (quotedFence.isEmpty()) quotedFence = delimiter;
+          else if (delimiter.startsWith(quotedFence) && fence.group(2).isBlank()) quotedFence = "";
+          continue;
+        }
+        if (!quotedFence.isEmpty()) continue;
+      }
+      if (!value.contains("#^") || value.startsWith("    ") || value.startsWith("\t")) continue;
+      Matcher code = INLINE_CODE.matcher(value);
+      boolean span = value.indexOf('`') >= 0 && code.find();
+      Matcher link = LINK.matcher(value);
+      while (link.find()) {
+        while (span && code.end() <= link.start()) span = code.find();
+        if (span && code.start() < link.end() || escaped(value, link.start())) continue;
+        String old = link.group(1), target = targetFor.apply(old, link.group(2));
+        if (old.equals(target)) continue;
+        result.append(text, copied, line.start() + link.start(1)).append(target);
+        copied = line.start() + link.end(1);
+      }
     }
-    return cursor == 0 ? text : result.append(text, cursor, text.length()).toString();
+    return copied == 0 ? text : result.append(text, copied, text.length()).toString();
+  }
+
+  private static boolean escaped(String value, int offset) {
+    int start = offset;
+    while (start > 0 && value.charAt(start - 1) == '\\') start--;
+    return (offset - start) % 2 != 0;
   }
 
   public static String removeParents(

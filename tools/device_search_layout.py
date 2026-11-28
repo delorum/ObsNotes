@@ -119,7 +119,7 @@ class SearchLayoutTest(unittest.TestCase):
         print('Checklist paired cell bounds and wrapped-row text alignment verified by screenshot; navigation preserved',flush=True)
 
     def test_4_root_picker_uses_selected_existing_day_and_save_keeps_that_target(self):
-        self.open();d.tap(d.find(desc='День для всех частей'))
+        self.open();d.tap(d.find(desc='Дата выбранного блока'))
         d.wait_for(lambda:bool(d.nodes(d.tree(),text='Вчера')));d.tap(d.nodes(d.tree(),text='Вчера')[0])
         d.wait_for(lambda:d.pending_editor()['destinationPath']==self.past);p.hide_ime()
         d.tap(d.find(text='Связать'));d.wait_for(d.keyboard_shown);u.picker_query('Root')

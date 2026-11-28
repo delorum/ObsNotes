@@ -128,11 +128,6 @@ public final class EditorBatch {
               && form.kind == Markdown.Kind.SECTION
               && form.heading.equals(
                   origin.originalBlock(new Markdown(origin.sourceSnapshot)).section().heading());
-      if (origin != null
-          && !origin.sourcePath.equals(form.destinationPath)
-          && (!Events.id(form.text).isEmpty() || form.text.contains("[[#^")))
-        throw new IllegalArgumentException(
-            "Корневой блок или локальную ссылку нельзя переносить между файлами");
       if (same) atOrigin.computeIfAbsent(origin.partId, ignored -> new ArrayList<>()).add(form);
       else if (!form.emptyNote() || form.taskOnly()) insert.add(form);
     }
@@ -164,7 +159,7 @@ public final class EditorBatch {
             && forms.stream()
                 .noneMatch(
                     f ->
-                        f.destinationPath.equals(original.sourcePath)
+                        f.origins.contains(original.partId)
                             && f.kind == Markdown.Kind.SECTION
                             && !f.emptyNote()
                             && Events.id(f.text).equals(Events.id(original.original))))
@@ -199,8 +194,14 @@ public final class EditorBatch {
         form.targetLine = targets.get(0).line();
       }
       for (var change :
-          VaultRepository.plan(form, document, document, template, date, now, CleanupRules.EMPTY))
-        after.put(change.path(), change.after());
+          VaultRepository.plan(
+              form,
+              document,
+              document,
+              template,
+              VaultRepository.destinationDate(form.destinationPath, date),
+              now,
+              CleanupRules.EMPTY)) after.put(change.path(), change.after());
     }
     boolean structural =
         !insert.isEmpty()

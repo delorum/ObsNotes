@@ -784,8 +784,11 @@ public final class MainActivity extends AppCompatActivity {
           }
 
           public void destination(int days) {
-            if (editor != null)
-              chooseEditorDay(RelativeDates.shortcut(editor.destinationPath, days));
+            if (editor != null) {
+              var form = editor.activePart();
+              chooseEditorDay(
+                  editor, form.partId, RelativeDates.shortcut(form.destinationPath, days));
+            }
           }
 
           public void tags(boolean oneLine, boolean person, int cursor) {
@@ -984,7 +987,9 @@ public final class MainActivity extends AppCompatActivity {
   private void pickDestination() {
     if (busy) return;
     stopWeatherInEditor();
-    LocalDate selectedDay = RelativeDates.date(editor.destinationPath);
+    EditorState owner = editor;
+    EditorState part = owner.activePart();
+    LocalDate selectedDay = RelativeDates.date(part.destinationPath);
     SafVaultStorage chosenStorage = storage;
     PastDayPicker.show(
         ui,
@@ -1009,13 +1014,21 @@ public final class MainActivity extends AppCompatActivity {
                         });
                   }
                 }),
-        selected -> chooseEditorDay(selected.date()));
+        selected -> chooseEditorDay(owner, part.partId, selected.date()));
   }
 
-  private void chooseEditorDay(LocalDate date) {
-    if (busy || editor == null) return;
+  private void chooseEditorDay(EditorState owner, String partId, LocalDate date) {
+    if (busy || editor != owner) return;
     stopWeatherInEditor();
-    EditorState owner = editor;
+    EditorState part =
+        owner.parts == null
+            ? owner
+            : owner.parts.parts.stream()
+                .map(EditorParts.Part::form)
+                .filter(form -> form.partId.equals(partId))
+                .findFirst()
+                .orElse(null);
+    if (part == null || RelativeDates.date(part.destinationPath).equals(date)) return;
     SafVaultStorage chosenStorage = storage;
     DiaryIndex chosenIndex = index;
     work(
@@ -1036,13 +1049,13 @@ public final class MainActivity extends AppCompatActivity {
             return;
           }
           try {
-            WorkDaily.requireTarget(owner, loaded.work().note());
+            WorkDaily.requireTarget(part, loaded.work().note());
           } catch (IllegalArgumentException missing) {
             ui.error(missing.getMessage());
             return;
           }
-          owner.chooseDay(loaded.day().path(), loaded.day().document().text);
-          WorkDaily.snapshot(owner, loaded.work().note());
+          part.chooseDay(loaded.day().path(), loaded.day().document().text);
+          WorkDaily.snapshot(part, loaded.work().note());
           recovery.save(owner, vault);
           showEditor();
         });
@@ -1315,9 +1328,10 @@ public final class MainActivity extends AppCompatActivity {
     cancelNavigation();
     if (editor.parts != null) editor.parts.sync();
     EditorState form = editor;
+    EditorState opened = form.activePart();
     int returnY =
         taskViewport != null
-                && taskViewport.path().equals(form.destinationPath)
+                && taskViewport.path().equals(opened.destinationPath)
                 && (taskViewport.line() == form.targetLine || taskViewport.line() == form.start)
             ? taskViewport.y()
             : -1;
@@ -1332,19 +1346,18 @@ public final class MainActivity extends AppCompatActivity {
     }
     recovery.save(editor, vault);
     String selectedVault = vault;
-    Markdown from = new Markdown(form.sourceSnapshot), to = new Markdown(form.destinationSnapshot);
     SafVaultStorage selectedStorage = storage;
     Markdown selectedTemplate = template;
     VaultRepository selectedRepository = repository;
     work(
         () -> {
           LocalDate targetDay =
-              LocalDate.parse(DiaryLayout.fileName(form.destinationPath).substring(0, 10));
+              LocalDate.parse(DiaryLayout.fileName(opened.destinationPath).substring(0, 10));
           var changes =
-              VaultRepository.plan(
+              selectedRepository.planEditor(
                   form,
-                  from,
-                  to,
+                  new Markdown(form.sourceSnapshot),
+                  new Markdown(form.destinationSnapshot),
                   selectedTemplate,
                   targetDay,
                   LocalDateTime.now(),
@@ -1359,19 +1372,20 @@ public final class MainActivity extends AppCompatActivity {
           editor = null;
           if (!changes.isEmpty()) {
             if (returnY < 0) checklistContext = null;
-            path = form.destinationPath;
+            path = opened.destinationPath;
             day = WorkDaily.date(path);
             var dailyChange =
                 changes.stream().filter(c -> c.path().equals(path)).findFirst().orElse(null);
             document =
-                new Markdown(dailyChange == null ? form.destinationSnapshot : dailyChange.after());
+                new Markdown(
+                    dailyChange == null ? opened.destinationSnapshot : dailyChange.after());
             String selectedWork = WorkDaily.path(day);
             var workChange =
                 changes.stream()
                     .filter(c -> c.path().equals(selectedWork))
                     .findFirst()
                     .orElse(null);
-            String workText = workChange != null ? workChange.after() : form.workSnapshot;
+            String workText = workChange != null ? workChange.after() : opened.workSnapshot;
             workNote =
                 workText == null ? null : new WorkDaily.Note(selectedWork, new Markdown(workText));
             workError = null;

@@ -75,8 +75,9 @@ def relative(day):
 
 def calendar(delta,today):
     hide_ime()
-    d.tap(d.find(desc='День для всех частей'))
-    selected = dt.date.fromisoformat(d.pending_editor()['destinationPath'].rsplit('/', 1)[1][:10])
+    button = d.find(desc='Дата выбранного блока')
+    selected = dt.datetime.strptime(button.get('text'), '%d.%m.%y').date()
+    d.tap(button)
     d.tap(d.find(desc='Выбрать дату'))
     future = today + dt.timedelta(days=delta)
     months = (future.year - selected.year) * 12 + future.month - selected.month
@@ -142,7 +143,7 @@ class EditorPartsTest(unittest.TestCase):
         self.assertFalse(d.nodes(root, text='1 · FirstPart'))
         self.assertFalse(d.nodes(root, text='2 · SecondPart'))
         self.assertFalse(d.nodes(root, text='3 · ThirdPart'))
-        date = d.find(desc='День для всех частей')
+        date = d.find(desc='Дата выбранного блока')
         sections = d.find(text='Разделы')
         line = d.find(text='На строку')
         self.assertLess(d.bounds(date)[3], d.bounds(sections)[3])
@@ -185,27 +186,32 @@ class EditorPartsTest(unittest.TestCase):
         self.assertIsNotNone(d.find(desc='Корень части 2',down=False))
         self.assertIsNotNone(d.find(desc='Связь части 2, 1',down=False))
         self.assertIsNotNone(d.find(text='К части 2'))
-        hide_ime()
-        d.tap(d.find(desc='День для всех частей'))
+        caret(3)
+        d.tap(d.find(desc='Дата выбранного блока'))
         d.wait_for(lambda: bool(d.nodes(d.tree(), text='Завтра')))
         for label in ('Вчера','Позавчера','Завтра','Послезавтра','FixtureTomorrow'):
             self.assertTrue(d.nodes(d.tree(), text=label), label)
         d.tap(d.nodes(d.tree(), text='Позавчера')[0])
         expected = relative(self.today-dt.timedelta(days=2))
-        d.wait_for(lambda: all(item['destinationPath']==expected for item in state()['items']))
+        d.wait_for(lambda: state()['items'][2]['destinationPath'] == expected)
         self.assertIsNotNone(d.find(text=(self.today-dt.timedelta(days=2)).strftime('%d.%m.%y')))
         chosen = calendar(5,self.today)
-        d.wait_for(lambda: all(item['destinationPath']==chosen for item in state()['items']))
+        d.wait_for(lambda: state()['items'][2]['destinationPath'] == chosen)
         calendar(6,self.today)  # Deliberately absent: no file creation or save-conflict dialog.
         d.wait_for(lambda: bool(d.nodes(d.tree(),text='Заметка не найдена')))
-        self.assertTrue(all(item['destinationPath']==chosen for item in state()['items']))
+        self.assertTrue(state()['items'][2]['destinationPath'] == chosen)
         self.assertFalse(d.nodes(d.tree(),text='Остаться'))
         hide_ime()
-        d.tap(d.find(desc='День для всех частей'))
+        d.tap(d.find(desc='Дата выбранного блока'))
         d.tap(d.find(text='FixtureTomorrow'))
         expected = relative(self.today+dt.timedelta(days=1))
-        d.wait_for(lambda: all(item['destinationPath']==expected for item in state()['items']))
+        d.wait_for(lambda: state()['items'][2]['destinationPath'] == expected)
         self.assertIsNotNone(d.find(text=(self.today+dt.timedelta(days=1)).strftime('%d.%m.%y')))
+        for part_index in (1, 2):
+            caret(part_index)
+            d.tap(d.find(desc='На день вперёд'))
+            d.wait_for(lambda: state()['items'][part_index-1]['destinationPath'] == expected)
+        caret(3)
         print('Chained links and relative existing past/future days verified', flush=True)
         hide_ime()
         Path('/tmp/obsnotes-cursor-links.png').write_bytes(d.adb('exec-out', 'screencap', '-p'))
@@ -244,7 +250,7 @@ class EditorPartsTest(unittest.TestCase):
         d.adb('shell', 'input', 'text', 'Second')
         d.wait_for(lambda: state()['value'] == 'First\n\nSecond')
         hide_ime()
-        labels = ('На два дня назад', 'На день назад', 'День для всех частей',
+        labels = ('На два дня назад', 'На день назад', 'Дата выбранного блока',
                   'На день вперёд', 'На два дня вперёд')
         root = d.tree()
         buttons = [d.nodes(root, desc=label)[0] for label in labels]
@@ -259,10 +265,10 @@ class EditorPartsTest(unittest.TestCase):
 
         def expect(delta):
             day = self.today + dt.timedelta(days=delta)
-            d.wait_for(lambda: all(item['destinationPath'] == relative(day)
-                                  for item in state()['items']))
+            d.wait_for(lambda: [item['destinationPath'] for item in state()['items']]
+                                 == [self.relative, relative(day)])
             self.assertEqual(day.strftime('%d.%m.%y'),
-                             d.find(desc='День для всех частей').get('text'))
+                             d.find(desc='Дата выбранного блока').get('text'))
             self.assertEqual('First\n\nSecond', input_field().get('text'))
 
         for index, delta in ((1, -1), (3, 0), (0, -2), (4, 0), (4, 2), (1, 1)):
@@ -293,7 +299,9 @@ class EditorPartsTest(unittest.TestCase):
         target = relative(self.today + dt.timedelta(days=1))
         d.wait_for(lambda: 'Second' in d.adb('exec-out','cat',d.PHONE+'/'+target).decode())
         result = d.adb('exec-out','cat',d.PHONE+'/'+target).decode()
-        self.assertIn('First\n\nSecond', result)
+        self.assertIn('Second', result)
+        self.assertNotIn('First', result)
+        self.assertIn('First', d.adb('exec-out', 'cat', d.PHONE+'/'+self.relative).decode())
         print('Four date shortcuts, numeric label, default spacing, missing date and actual save passed', flush=True)
 
     def test_calendar_handles_missing_without_losing_editor(self):

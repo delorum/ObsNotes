@@ -298,13 +298,19 @@ public class MultipleLinksTest {
   }
 
   @Test
-  public void bindingLegacyParentsKeepsAliasSpacingLineEndingsAndBody() {
+  public void bindingLegacyParentsKeepsAliasSpacingLineEndingsAndCode() {
     String external = "[[Elsewhere/Note#^other|Other]]";
-    String body = "Body with an inline " + ref("one") + "\r\n" + ref("later");
+    String body = "Body with inline " + ref("one") + " and `" + ref("literal") + "`";
     String source = ref("one") + "  " + external + "\r\n[[#^two]]\r\n" + body;
     assertEquals(
-        absolute(ref("one")) + "  " + external + "\r\n" + absolute("[[#^two]]") + "\r\n" + body,
-        Events.bindLocalParents(PATH, source));
+        absolute(ref("one"))
+            + "  "
+            + external
+            + "\r\n"
+            + absolute("[[#^two]]")
+            + "\r\n"
+            + body.replace(ref("one"), absolute(ref("one"))),
+        Events.bindLocalReferences(PATH, source));
   }
 
   @Test
@@ -358,17 +364,6 @@ public class MultipleLinksTest {
     assertTrue(changes.get(1).after().contains("Root-one ^one"));
     assertFalse(changes.get(1).after().contains("First"));
     assertFalse(changes.get(1).after().contains("Second"));
-  }
-
-  @Test
-  public void movingARootStillRequiresAnUpdateOfItsIncomingLinks() {
-    var m = doc(root("one") + "\n\n" + ref("one") + "\nChild");
-    var target = doc("Destination");
-    var s = edit(m, "Root-one");
-    s.chooseDay(OTHER, target.text);
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> VaultRepository.plan(s, m, target, TEMPLATE, DATE.minusDays(1), DATE.atTime(12, 0)));
   }
 
   @Test

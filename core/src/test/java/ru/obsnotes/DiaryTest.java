@@ -242,13 +242,16 @@ public class DiaryTest {
   }
 
   @Test
-  public void linkedBlocksCannotMoveAcrossDays() {
-    Markdown m = new Markdown("## Заметки\n\n" + Events.root("событие") + "\n");
-    EditorState s = editing(m);
+  public void movingBlockKeepsTheExistingAnchorAndCalloutInItsNewFile() {
+    String root = Events.root("событие ^event-fixture");
+    Markdown source = new Markdown("## Заметки\n\n" + root + "\n");
+    Markdown target = new Markdown("## Заметки\n\nДругая запись\n");
+    EditorState s = editing(source);
     s.destinationPath = "past.md";
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> VaultRepository.plan(s, m, m, CATALOG, LocalDate.now(), LocalDateTime.now()));
+    var changes =
+        VaultRepository.plan(s, source, target, CATALOG, LocalDate.now(), LocalDateTime.now());
+    assertTrue(changes.get(0).after().contains(root));
+    assertFalse(changes.get(1).after().contains("^event-fixture"));
   }
 
   @Test

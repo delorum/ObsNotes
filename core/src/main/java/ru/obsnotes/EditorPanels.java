@@ -10,6 +10,7 @@ public record EditorPanels(List<Part> parts, String error) {
 
   public record Part(
       String id,
+      String destinationPath,
       List<Routing.Choice> routes,
       List<Mark> marks,
       List<Relation> relations,
@@ -37,6 +38,7 @@ public record EditorPanels(List<Part> parts, String error) {
       parts.add(
           new Part(
               form.partId,
+              form.destinationPath,
               List.copyOf(form.routes),
               marks,
               relations,

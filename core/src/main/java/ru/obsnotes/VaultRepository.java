@@ -109,6 +109,27 @@ public final class VaultRepository {
     return List.copyOf(result);
   }
 
+  public List<Change> planEditor(
+      EditorState state,
+      Markdown source,
+      Markdown destination,
+      Markdown template,
+      LocalDate date,
+      LocalDateTime now,
+      CleanupRules rules)
+      throws IOException {
+    return EventMoves.rewrite(
+        storage, state, plan(state, source, destination, template, date, now, rules));
+  }
+
+  static LocalDate destinationDate(String path, LocalDate fallback) {
+    try {
+      return RelativeDates.date(path);
+    } catch (DateTimeException | IndexOutOfBoundsException invalid) {
+      return fallback;
+    }
+  }
+
   public static List<Change> plan(
       EditorState state,
       Markdown source,
@@ -179,17 +200,16 @@ public final class VaultRepository {
           rules);
     }
     String text = state.taskOnly() ? "" : state.savedText();
-    if (!same) text = Events.bindLocalParents(state.sourcePath, text);
+    if (!same) text = Events.bindLocalReferences(state.sourcePath, text);
     if (state.taskOnly()
         && block != null
         && !Events.id(block.text()).isEmpty()
         && !state.removedRoots.contains(
             new Events.Parent(state.sourcePath, Events.id(block.text()))))
       throw new IllegalArgumentException("Блок с якорем нельзя убрать при отметке задачи");
-    if (!same && (!Events.id(text).isEmpty() || text.contains("[[#^")))
-      throw new IllegalArgumentException(
-          "Корневой блок или локальную ссылку нельзя переносить между днями: ссылки должны"
-              + " сохранить адрес.");
+    if ((state.kind != Markdown.Kind.SECTION || WorkDaily.isPath(state.destinationPath))
+        && !Events.id(text).isEmpty())
+      throw new IllegalArgumentException("Блок с якорем можно переносить только в раздел дневника");
     if (!state.fresh
         && same
         && state.kind == Markdown.Kind.SECTION
@@ -218,9 +238,7 @@ public final class VaultRepository {
         && state.origins.isEmpty()
         && state.heading.equals("## Заметки")
         && state.kind == Markdown.Kind.SECTION) {
-      String stamp = to.timestamp(now);
-      Events.Prefix prefix = Events.prefix(state.destinationPath, text);
-      payload = prefix.raw() + stamp + prefix.body();
+      payload = withTimestamp(to, state.destinationPath, text, now);
     }
     if (state.heading.equals("## Сделано сегодня (или отмечено сделанным сегодня)")
         && state.kind == Markdown.Kind.SECTION)
@@ -247,6 +265,11 @@ public final class VaultRepository {
         state,
         true,
         rules);
+  }
+
+  static String withTimestamp(Markdown note, String path, String text, LocalDateTime now) {
+    Events.Prefix prefix = Events.prefix(path, text);
+    return prefix.raw() + note.timestamp(now) + prefix.body();
   }
 
   private static List<Change> finish(
