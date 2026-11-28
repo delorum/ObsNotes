@@ -2,7 +2,7 @@ plugins { id("com.android.application") }
 android {
  namespace = "ru.obsnotes"
  compileSdk { version = release(36) { minorApiLevel = 1 } }
- defaultConfig { applicationId = "ru.obsnotes"; minSdk = 33; targetSdk = 36; versionCode = 47; versionName = "0.3.0" }
+ defaultConfig { applicationId = "ru.obsnotes"; minSdk = 33; targetSdk = 36; versionCode = 48; versionName = "0.3.1" }
  buildFeatures { buildConfig = true }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
  buildTypes { release { isMinifyEnabled = false } }

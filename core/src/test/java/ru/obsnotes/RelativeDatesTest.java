@@ -19,10 +19,35 @@ public class RelativeDatesTest {
   }
 
   @Test
-  public void destinationLabelsStayRelativeToOriginalFileAfterRepeatedChoices() {
+  public void relativeLabelsFollowTheChosenReferenceDay() {
     String origin = DiaryLayout.path(LocalDate.of(2011, 2, 28));
     assertEquals("Завтра", RelativeDates.label(DiaryLayout.path(LocalDate.of(2011, 3, 1)), origin));
     assertEquals("Вчера", RelativeDates.label(DiaryLayout.path(LocalDate.of(2011, 2, 27)), origin));
+  }
+
+  @Test
+  public void onEachShortcutSelectionTheButtonShowsAnAbsoluteDate() {
+    String destination = WorkDaily.path(LocalDate.of(2024, 3, 1));
+    int[] offsets = {-2, -1, 1, 2};
+    String[] dates = {"28.02.24", "29.02.24", "02.03.24", "03.03.24"};
+    String[] labels = {"Позавчера", "Вчера", "Завтра", "Послезавтра"};
+    for (int i = 0; i < offsets.length; i++) {
+      LocalDate target = RelativeDates.shortcut(destination, offsets[i]);
+      assertEquals(dates[i], RelativeDates.buttonLabel(DiaryLayout.path(target)));
+      assertEquals(labels[i], RelativeDates.label(target, RelativeDates.date(destination)));
+    }
+  }
+
+  @Test
+  public void successiveShortcutsShiftTheSelectedDateAndCanReturnToTheOriginal() {
+    LocalDate initial = LocalDate.of(2026, 1, 1);
+    String path = DiaryLayout.path(initial);
+    LocalDate yesterday = RelativeDates.shortcut(path, -1);
+    String selected = DiaryLayout.path(yesterday);
+    assertEquals(initial, RelativeDates.shortcut(selected, 1));
+    assertEquals(initial.minusDays(3), RelativeDates.shortcut(selected, -2));
+    assertEquals("Завтра", RelativeDates.label(initial, RelativeDates.date(selected)));
+    assertEquals("31.12.25", RelativeDates.buttonLabel(selected));
   }
 
   @Test

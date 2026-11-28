@@ -76,13 +76,15 @@ def relative(day):
 def calendar(delta,today):
     hide_ime()
     d.tap(d.find(desc='День для всех частей'))
-    d.wait_for(lambda: bool(d.nodes(d.tree(), text='Завтра')))
-    d.tap(d.nodes(d.tree(), desc='Выбрать дату')[0])
+    selected = dt.date.fromisoformat(d.pending_editor()['destinationPath'].rsplit('/', 1)[1][:10])
+    d.tap(d.find(desc='Выбрать дату'))
     future = today + dt.timedelta(days=delta)
-    if future.month != today.month:
+    months = (future.year - selected.year) * 12 + future.month - selected.month
+    for _ in range(abs(months)):
+        suffix = '/next' if months > 0 else '/prev'
         root = d.tree()
-        next_month = next(node for node in root.iter('node') if node.get('resource-id', '').endswith('/next'))
-        d.tap(next_month)
+        control = next(node for node in root.iter('node') if node.get('resource-id', '').endswith(suffix))
+        d.tap(control)
     root = d.tree()
     cells = [node for node in root.iter('node') if node.get('text') == str(future.day)
              or re.match(r'^0?' + str(future.day) + r'\s', node.get('content-desc', ''))]
@@ -145,7 +147,6 @@ class EditorPartsTest(unittest.TestCase):
         line = d.find(text='На строку')
         self.assertLess(d.bounds(date)[3], d.bounds(sections)[3])
         self.assertEqual(d.bounds(sections)[1], d.bounds(line)[1])
-        self.assertGreater(d.bounds(date)[2]-d.bounds(date)[0], d.bounds(sections)[2]-d.bounds(sections)[0])
         # Exact foreground colors in the text area: two tagged paragraphs must differ.
         d.find(text=state()['value'], down=False)
         root = d.tree()
@@ -192,7 +193,7 @@ class EditorPartsTest(unittest.TestCase):
         d.tap(d.nodes(d.tree(), text='Позавчера')[0])
         expected = relative(self.today-dt.timedelta(days=2))
         d.wait_for(lambda: all(item['destinationPath']==expected for item in state()['items']))
-        self.assertIsNotNone(d.find(text='Позавчера'))
+        self.assertIsNotNone(d.find(text=(self.today-dt.timedelta(days=2)).strftime('%d.%m.%y')))
         chosen = calendar(5,self.today)
         d.wait_for(lambda: all(item['destinationPath']==chosen for item in state()['items']))
         calendar(6,self.today)  # Deliberately absent: no file creation or save-conflict dialog.
@@ -201,11 +202,10 @@ class EditorPartsTest(unittest.TestCase):
         self.assertFalse(d.nodes(d.tree(),text='Остаться'))
         hide_ime()
         d.tap(d.find(desc='День для всех частей'))
-        d.wait_for(lambda: bool(d.nodes(d.tree(), text='Завтра')))
-        d.tap(d.nodes(d.tree(), text='Завтра')[0])
+        d.tap(d.find(text='FixtureTomorrow'))
         expected = relative(self.today+dt.timedelta(days=1))
         d.wait_for(lambda: all(item['destinationPath']==expected for item in state()['items']))
-        self.assertIsNotNone(d.find(text='Завтра'))
+        self.assertIsNotNone(d.find(text=(self.today+dt.timedelta(days=1)).strftime('%d.%m.%y')))
         print('Chained links and relative existing past/future days verified', flush=True)
         hide_ime()
         Path('/tmp/obsnotes-cursor-links.png').write_bytes(d.adb('exec-out', 'screencap', '-p'))
@@ -234,6 +234,68 @@ class EditorPartsTest(unittest.TestCase):
         d.wait_for(lambda: bool(d.nodes(d.tree(),desc='Поиск разделов')))
         print('Recovery, future SAF write and actual two-level Markdown links verified',flush=True)
 
+    def test_shortcuts_numeric_button_and_missing_destination(self):
+        from device_editor_exit import input_field
+
+        d.tap(d.find(desc='Новая заметка', down=False))
+        d.wait_for(d.keyboard_shown)
+        d.adb('shell', 'input', 'text', 'First')
+        d.adb('shell', 'input', 'keyevent', '66', '66')
+        d.adb('shell', 'input', 'text', 'Second')
+        d.wait_for(lambda: state()['value'] == 'First\n\nSecond')
+        hide_ime()
+        labels = ('На два дня назад', 'На день назад', 'День для всех частей',
+                  'На день вперёд', 'На два дня вперёд')
+        root = d.tree()
+        buttons = [d.nodes(root, desc=label)[0] for label in labels]
+        boxes = [d.bounds(button) for button in buttons]
+        width = boxes[0][2] - boxes[0][0]
+        self.assertTrue(all(box[3] - box[1] == width for box in boxes))
+        self.assertTrue(all(box[2] - box[0] == width for box in boxes[:2] + boxes[3:]))
+        for a, b in zip(boxes, boxes[1:]):
+            self.assertAlmostEqual(width / 6, b[0] - a[2], delta=2)
+        lock = d.nodes(root, desc='Зашифровать часть')[0]
+        self.assertAlmostEqual(width / 6, d.bounds(lock)[1] - boxes[-1][3], delta=2)
+
+        def expect(delta):
+            day = self.today + dt.timedelta(days=delta)
+            d.wait_for(lambda: all(item['destinationPath'] == relative(day)
+                                  for item in state()['items']))
+            self.assertEqual(day.strftime('%d.%m.%y'),
+                             d.find(desc='День для всех частей').get('text'))
+            self.assertEqual('First\n\nSecond', input_field().get('text'))
+
+        for index, delta in ((1, -1), (3, 0), (0, -2), (4, 0), (4, 2), (1, 1)):
+            hide_ime()
+            d.tap(d.find(desc=labels[index]))
+            expect(delta)
+
+        hide_ime()
+        d.tap(d.find(desc=labels[2]))
+        d.wait_for(lambda: bool(d.nodes(d.tree(), text='Вчера')))
+        d.tap(d.find(text='Вчера'))  # Selected day was +1, so this returns to the original day.
+        expect(0)
+        hide_ime()
+        d.tap(d.find(desc=labels[2]))
+        for name in ('Позавчера', 'Вчера', 'Завтра', 'Послезавтра'):
+            self.assertTrue(d.nodes(d.tree(), text=name))
+        d.tap(d.find(text='Завтра'))
+        expect(1)
+
+        hide_ime()
+        d.tap(d.find(desc=labels[4]))  # +2 from +1, i.e. the absent +3 fixture.
+        d.wait_for(lambda: bool(d.nodes(d.tree(), text='Заметка не найдена')))
+        expect(1)
+        self.assertFalse(d.nodes(d.tree(), text='Остаться'))
+        self.assertEqual(self.source, d.adb('exec-out', 'cat', d.PHONE+'/'+self.relative).decode())
+        hide_ime()
+        d.tap(d.find(desc='Сохранить', down=False))
+        target = relative(self.today + dt.timedelta(days=1))
+        d.wait_for(lambda: 'Second' in d.adb('exec-out','cat',d.PHONE+'/'+target).decode())
+        result = d.adb('exec-out','cat',d.PHONE+'/'+target).decode()
+        self.assertIn('First\n\nSecond', result)
+        print('Four date shortcuts, numeric label, default spacing, missing date and actual save passed', flush=True)
+
     def test_calendar_handles_missing_without_losing_editor(self):
         d.tap(d.find(desc='Сегодня'))
         d.wait_for(lambda: bool(d.nodes(d.tree(),desc='Поиск разделов')))
@@ -261,9 +323,12 @@ if __name__=='__main__':
     parser.add_argument('--serial',required=True)
     parser.add_argument('--apk',required=True)
     parser.add_argument('--calendar-only',action='store_true')
+    parser.add_argument('--shortcuts-only',action='store_true')
     args=parser.parse_args()
     d.ADB=['/home/aborunov/Android/Sdk/platform-tools/adb','-s',args.serial]
     d.APK=args.apk
     name='test_calendar_handles_missing_without_losing_editor' if args.calendar_only else 'test_common_controls_global_colors_editable_chain_and_existing_dates'
+    if args.shortcuts_only:
+        name='test_shortcuts_numeric_button_and_missing_destination'
     result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite([EditorPartsTest(name)]))
     raise SystemExit(not result.wasSuccessful())

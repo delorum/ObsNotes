@@ -30,6 +30,8 @@ public final class EditorScreen {
 
     void destination();
 
+    void destination(int days);
+
     void tags(boolean oneLine, boolean person, int cursor);
 
     void root();
@@ -131,13 +133,10 @@ public final class EditorScreen {
         break;
       }
     TextView hint = ui.text(hint(state), 12, Ui.MUTED);
-    LinearLayout dates = ui.row();
-    ui.weighted(
-        dates,
-        ui.button(
-            RelativeDates.label(state.destinationPath, state.sourcePath), actions::destination));
+    ui.body.addView(EditorDateRow.create(ui, state, actions));
+
     if (state.kind == Markdown.Kind.TASK && !state.taskAppend) {
-      dates.addView(
+      ui.body.addView(
           TaskTextMode.button(
               ui,
               state,
@@ -146,7 +145,6 @@ public final class EditorScreen {
                 hint.setText(hint(state));
               }));
     }
-    ui.body.addView(dates);
     LinearLayout tags = ui.row();
     ui.weighted(
         tags,

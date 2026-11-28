@@ -66,7 +66,7 @@ class GroupEditTest(unittest.TestCase):
         e.put('Шаблоны/Шаблон дневниковой записи.md',TEMPLATE)
         self.work_path=self.relative.replace('Дневник/Хроника/','Работа/Daily/Хроника/').replace('.md','-work.md')
         d.adb('shell','mkdir','-p',d.PHONE+'/'+self.work_path.rsplit('/',1)[0])
-        e.put(self.work_path,'## Ideas\n\nDoNotShow\n\n## Основные события\n\nWorkOne\n\nWorkTwo\n\n## Meetings\nKeepMeeting\n')
+        e.put(self.work_path,'## Ideas\n\nDoNotShow\n\n## Основные события\n\n*Выделяй жирным шрифтом важное!*\n\nWorkOne\n\nWorkTwo\n\n## Meetings\nKeepMeeting\n')
         rule='Скрипты/Modules/Дневник/diaryCleanUtils.js'
         d.adb('shell','mkdir','-p',d.PHONE+'/'+rule.rsplit('/',1)[0])
         e.put(rule,'const excludeLines = ["- [ ] WearAccessory"]; const excludeContains = [];\n')
@@ -178,7 +178,10 @@ class GroupEditTest(unittest.TestCase):
         d.tap(d.find(desc='Развернуть раздел Работа'))
         d.tap(d.find(desc='Развернуть раздел Основные события'))
         d.find(text='WorkOne')
-        self.assertFalse(d.nodes(d.tree(),text='DoNotShow'))
+        tree = d.tree()
+        self.assertTrue(d.nodes(tree, text='Основные события · 2'))
+        self.assertFalse(d.nodes(tree, text='*Выделяй жирным шрифтом важное!*'))
+        self.assertFalse(d.nodes(tree, text='DoNotShow'))
         d.tap(d.find(desc='Новая заметка: Основные события'))
         d.wait_for(d.keyboard_shown)
         v.enter('NewWorkEvent')
@@ -187,6 +190,7 @@ class GroupEditTest(unittest.TestCase):
         self.save()
         self.assertIn('NewWorkEvent',self.note(self.work_path))
         self.assertIn('KeepMeeting',self.note(self.work_path))
+        self.assertIn('*Выделяй жирным шрифтом важное!*', self.note(self.work_path))
         self.assertNotIn('NewWorkEvent',self.note())
         print('Phone: exact work companion, simplified editor and correct destination passed',flush=True)
 
@@ -501,6 +505,40 @@ class GroupEditTest(unittest.TestCase):
         self.assertIn('PrefixOne',text.split('## Alpha')[1].split('## Beta')[0])
         self.assertIn('Other',text.split('## Beta')[1].split('## Fields')[0])
         print('Phone: reused metadata handlers apply to current copied forms and preserve newly typed text',flush=True)
+
+
+    def test_16_root_spacing_and_card_to_caret(self):
+        d.query('Events')
+        d.tap(d.find(text='Parent', down=False))
+        d.wait_for(d.keyboard_shown)
+        d.adb('shell', 'input', 'keyevent', '62')
+        d.wait_for(lambda: e.input_field().get('text') == 'Parent ')
+        d.adb('shell', 'input', 'text', 'continued')
+        d.wait_for(lambda: e.input_field().get('text') == 'Parent continued')
+        self.save()
+        self.assertIn('Parent continued ^parent', self.note())
+        self.assertIn('[[#^parent|Parent]]', self.note())
+
+        d.query('')
+        d.tap(d.find(desc='Новая заметка', down=False))
+        d.wait_for(d.keyboard_shown)
+        d.adb('shell', 'input', 'text', 'First')
+        d.adb('shell', 'input', 'keyevent', '66', '66')
+        d.adb('shell', 'input', 'text', 'Second')
+        d.wait_for(lambda: d.pending_editor()['parts']['value'] == 'First\n\nSecond')
+        for part, word, expected in ((1, 'One', 'FirstOne\n\nSecond'),
+                                     (2, 'Two', 'FirstOne\n\nSecondTwo')):
+            p.hide_ime()
+            card = d.find(desc=f'Назначения части {part}', down=False)
+            x1, y1, x2, y2 = d.bounds(card)
+            d.adb('shell', 'input', 'tap', str(x2 - (x2 - x1)//8), str((y1 + y2)//2))
+            d.wait_for(d.keyboard_shown)
+            d.adb('shell', 'input', 'text', word)
+            d.wait_for(lambda: d.pending_editor()['parts']['value'] == expected)
+        self.save()
+        self.assertIn('FirstOne', self.note())
+        self.assertIn('SecondTwo', self.note())
+        print('Phone: hidden anchor accepts space, and card taps focus the corresponding text ends', flush=True)
 
 
 if __name__=='__main__':

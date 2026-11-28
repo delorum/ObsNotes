@@ -242,11 +242,7 @@ final class EditorPartsScreen {
     input.setOnFocusChangeListener(
         (v, focus) -> owner.cursor = Math.max(0, input.getSelectionStart()));
     refresh.run();
-    var date =
-        ui.button(
-            RelativeDates.label(owner.destinationPath, owner.sourcePath), actions::destination);
-    date.setContentDescription("День для всех частей");
-    ui.body.addView(date, new LinearLayout.LayoutParams(-1, -2));
+    ui.body.addView(EditorDateRow.create(ui, owner, actions));
     LinearLayout tools = ui.row();
     Runnable selectCaret =
         () -> {
@@ -399,6 +395,10 @@ final class EditorPartsScreen {
 
     public void destination() {
       parent.destination();
+    }
+
+    public void destination(int days) {
+      parent.destination(days);
     }
 
     public void tags(boolean line, boolean person, int cursor) {

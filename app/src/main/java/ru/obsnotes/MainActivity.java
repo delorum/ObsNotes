@@ -768,6 +768,11 @@ public final class MainActivity extends AppCompatActivity {
             pickDestination();
           }
 
+          public void destination(int days) {
+            if (editor != null)
+              chooseEditorDay(RelativeDates.shortcut(editor.destinationPath, days));
+          }
+
           public void tags(boolean oneLine, boolean person, int cursor) {
             pickTags(oneLine, person, cursor);
           }
@@ -964,11 +969,11 @@ public final class MainActivity extends AppCompatActivity {
   private void pickDestination() {
     if (busy) return;
     stopWeatherInEditor();
-    LocalDate source = LocalDate.parse(DiaryLayout.fileName(editor.sourcePath).substring(0, 10));
+    LocalDate selectedDay = RelativeDates.date(editor.destinationPath);
     SafVaultStorage chosenStorage = storage;
     PastDayPicker.show(
         ui,
-        source,
+        selectedDay,
         (from, loaded, failed) ->
             io.execute(
                 () -> {
@@ -989,33 +994,43 @@ public final class MainActivity extends AppCompatActivity {
                         });
                   }
                 }),
-        selected ->
-            work(
-                () -> {
-                  try {
-                    var loadedDay = index.day(storage, selected.date());
-                    return new EditorDay(loadedDay, readWork(storage, selected.date()));
-                  } catch (java.io.FileNotFoundException absent) {
-                    return null;
-                  }
-                },
-                loaded -> {
-                  if (loaded == null) {
-                    lastError = "Заметка не найдена";
-                    ui.error(lastError);
-                    return;
-                  }
-                  try {
-                    WorkDaily.requireTarget(editor, loaded.work().note());
-                  } catch (IllegalArgumentException missing) {
-                    ui.error(missing.getMessage());
-                    return;
-                  }
-                  editor.chooseDay(loaded.day().path(), loaded.day().document().text);
-                  WorkDaily.snapshot(editor, loaded.work().note());
-                  recovery.save(editor, vault);
-                  showEditor();
-                }));
+        selected -> chooseEditorDay(selected.date()));
+  }
+
+  private void chooseEditorDay(LocalDate date) {
+    if (busy || editor == null) return;
+    stopWeatherInEditor();
+    EditorState owner = editor;
+    SafVaultStorage chosenStorage = storage;
+    DiaryIndex chosenIndex = index;
+    work(
+        () -> {
+          try {
+            var loadedDay = chosenIndex.day(chosenStorage, date);
+            return new EditorDay(loadedDay, readWork(chosenStorage, date));
+          } catch (IOException error) {
+            if (DayNavigation.missing(error)) return null;
+            throw error;
+          }
+        },
+        loaded -> {
+          if (editor != owner) return;
+          if (loaded == null) {
+            lastError = DayNavigation.NOT_FOUND;
+            ui.error(lastError);
+            return;
+          }
+          try {
+            WorkDaily.requireTarget(owner, loaded.work().note());
+          } catch (IllegalArgumentException missing) {
+            ui.error(missing.getMessage());
+            return;
+          }
+          owner.chooseDay(loaded.day().path(), loaded.day().document().text);
+          WorkDaily.snapshot(owner, loaded.work().note());
+          recovery.save(owner, vault);
+          showEditor();
+        });
   }
 
   private void pickTags(boolean oneLine, boolean person, int cursor) {

@@ -5,7 +5,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 
-/** Labels use the opened file's day, regardless of the wall clock or selected destination. */
+/** Date navigation and list labels use the selected destination, independent of the wall clock. */
 public final class RelativeDates {
   private RelativeDates() {}
 
@@ -14,6 +14,17 @@ public final class RelativeDates {
 
   public static LocalDate date(String path) {
     return LocalDate.parse(DiaryLayout.fileName(path).substring(0, 10));
+  }
+
+  private static final DateTimeFormatter BUTTON_FORMAT =
+      DateTimeFormatter.ofPattern("dd.MM.yy", Locale.ROOT);
+
+  public static String buttonLabel(String path) {
+    return date(path).format(BUTTON_FORMAT);
+  }
+
+  public static LocalDate shortcut(String destinationPath, int days) {
+    return date(destinationPath).plusDays(days);
   }
 
   public static String label(LocalDate date, LocalDate origin) {
