@@ -179,6 +179,7 @@ public final class VaultRepository {
           rules);
     }
     String text = state.taskOnly() ? "" : state.savedText();
+    if (!same) text = Events.bindLocalParents(state.sourcePath, text);
     if (state.taskOnly()
         && block != null
         && !Events.id(block.text()).isEmpty()

@@ -58,6 +58,8 @@ public final class EditorBatch {
     }
     owner.parts.value = owner.parts.baseline = text.toString();
     owner.parts.template = template;
+    // The constructor imported the seed paragraph; import the batch's forms once.
+    owner.parts.links.assign(new PartLinks());
     owner.parts.imported = false;
     owner.parts.importLinks();
     // Bind selected parents by stable part identity, rather than by a stale external snapshot.

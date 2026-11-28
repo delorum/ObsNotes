@@ -686,6 +686,8 @@ public final class EditorParts {
                         + "]]"
                     : ref.raw());
       form.text = Events.withLinks(form.text, raw);
+      if (!form.sourcePath.equals(form.destinationPath))
+        form.text = Events.bindLocalParents(form.sourcePath, form.text);
     }
     return forms;
   }

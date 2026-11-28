@@ -156,6 +156,22 @@ public final class Events {
     return links.isEmpty() ? body : String.join(eol, links) + eol + body;
   }
 
+  /** Give leading local links the original file address before moving the block. */
+  static String bindLocalParents(String source, String text) {
+    if (source.isEmpty() || !text.contains("[[#^")) return text;
+    Matcher links = LINK.matcher(prefix(source, text).raw());
+    String path = source.endsWith(".md") ? source.substring(0, source.length() - 3) : source;
+    StringBuilder result = new StringBuilder();
+    int cursor = 0;
+    while (links.find()) {
+      if (!links.group(1).isEmpty()) continue;
+      int target = links.start(1);
+      result.append(text, cursor, target).append(path);
+      cursor = target;
+    }
+    return cursor == 0 ? text : result.append(text, cursor, text.length()).toString();
+  }
+
   public static String removeParents(
       String source, String text, java.util.function.Predicate<Parent> remove) {
     Prefix p = prefix(source, text);

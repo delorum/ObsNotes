@@ -285,6 +285,92 @@ public class MultipleLinksTest {
         saved(s, m).text);
   }
 
+  private static String absolute(String local) {
+    return "[[" + PATH.substring(0, PATH.length() - 3) + local.substring(2);
+  }
+
+  @Test
+  public void generatedSameDayParentHasTheFullFilePath() {
+    var m = doc(root("one") + "\n\nChild");
+    var s = edit(m, "Child");
+    s.parts.addExternal(0, candidate(PATH, root("one")), m.text, null);
+    assertTrue(saved(s, m).text.contains(absolute("[[#^one|Root-one]]") + "\nChild"));
+  }
+
+  @Test
+  public void bindingLegacyParentsKeepsAliasSpacingLineEndingsAndBody() {
+    String external = "[[Elsewhere/Note#^other|Other]]";
+    String body = "Body with an inline " + ref("one") + "\r\n" + ref("later");
+    String source = ref("one") + "  " + external + "\r\n[[#^two]]\r\n" + body;
+    assertEquals(
+        absolute(ref("one")) + "  " + external + "\r\n" + absolute("[[#^two]]") + "\r\n" + body,
+        Events.bindLocalParents(PATH, source));
+  }
+
+  @Test
+  public void movingAnAdditionFromSingleAndSplitEditorsKeepsItsOriginalRoot() {
+    var m = doc(root("one") + "\n\n" + ref("one") + "\nChild");
+    var target = doc("Destination");
+    var child = m.blocks.get(1);
+    for (int parts : List.of(0, 1, 2)) {
+      var s = EditorState.editing(PATH, m, TEMPLATE, child);
+      if (parts > 0) s.enableParts(TEMPLATE);
+      if (parts == 2) s.edit("Child\n\nSecond part");
+      s.chooseDay(OTHER, target.text);
+      var changes =
+          VaultRepository.plan(s, m, target, TEMPLATE, DATE.minusDays(1), DATE.atTime(12, 0));
+      assertEquals(
+          List.of(OTHER, PATH), changes.stream().map(VaultRepository.Change::path).toList());
+      var moved = new Markdown(changes.get(0).after());
+      assertEquals(
+          List.of(absolute(ref("one"))),
+          moved.blocks.stream()
+              .flatMap(block -> Events.prefix(OTHER, block.text()).links().stream())
+              .map(Events.Leading::raw)
+              .toList());
+      assertTrue(changes.get(1).after().contains("Root-one ^one"));
+      assertFalse(changes.get(1).after().contains("Child"));
+      assertEquals(parts == 2, moved.text.contains("Second part"));
+    }
+  }
+
+  @Test
+  public void movingSelectedAdditionsRebindsEveryLegacyParentInTheBatch() {
+    var m = doc(root("one") + "\n\n" + ref("one") + "\nFirst\n\n" + ref("one") + "\nSecond");
+    var target = doc("Destination");
+    var selection = new BlockSelection();
+    selection.toggle(PATH, m, m.blocks.get(1));
+    selection.toggle(PATH, m, m.blocks.get(2));
+    var s = EditorBatch.create(PATH, m, TEMPLATE, null, selection.ordered(PATH, Map.of(PATH, m)));
+    assertEquals(1, s.parts.references(0).size());
+    assertEquals(1, s.parts.references(1).size());
+    s.chooseDay(OTHER, target.text);
+    var changes =
+        VaultRepository.plan(s, m, target, TEMPLATE, DATE.minusDays(1), DATE.atTime(12, 0));
+    assertEquals(List.of(OTHER, PATH), changes.stream().map(VaultRepository.Change::path).toList());
+    var moved = new Markdown(changes.get(0).after());
+    assertEquals(
+        List.of(absolute(ref("one")), absolute(ref("one"))),
+        moved.blocks.stream()
+            .flatMap(block -> Events.prefix(OTHER, block.text()).links().stream())
+            .map(Events.Leading::raw)
+            .toList());
+    assertTrue(changes.get(1).after().contains("Root-one ^one"));
+    assertFalse(changes.get(1).after().contains("First"));
+    assertFalse(changes.get(1).after().contains("Second"));
+  }
+
+  @Test
+  public void movingARootStillRequiresAnUpdateOfItsIncomingLinks() {
+    var m = doc(root("one") + "\n\n" + ref("one") + "\nChild");
+    var target = doc("Destination");
+    var s = edit(m, "Root-one");
+    s.chooseDay(OTHER, target.text);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> VaultRepository.plan(s, m, target, TEMPLATE, DATE.minusDays(1), DATE.atTime(12, 0)));
+  }
+
   @Test
   public void rootRemovedThenMovedCleansSourceAndPreservesExternalFiles() {
     var m = doc(root("one") + "\n\n" + ref("one") + "\nChild");
