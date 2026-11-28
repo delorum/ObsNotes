@@ -1,5 +1,8 @@
 package ru.obsnotes;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.*;
@@ -28,14 +31,33 @@ public final class InlineCrypto {
   }
 
   public static String encrypt(String text, char[] password) {
+    byte[] plain = text.getBytes(StandardCharsets.UTF_8);
+    try {
+      return encryptBytes(plain, password);
+    } finally {
+      Arrays.fill(plain, (byte) 0);
+    }
+  }
+
+  // The caller owns and wipes the plaintext.
+  static String encryptBytes(byte[] plain, char[] password) {
     byte[] iv = new byte[16], salt = new byte[16];
     RANDOM.nextBytes(iv);
     RANDOM.nextBytes(salt);
-    return encrypt(text, password, iv, salt);
+    return encryptBytes(plain, password, iv, salt);
   }
 
   static String encrypt(String text, char[] password, byte[] iv, byte[] salt) {
-    byte[] key = null, plain = text.getBytes(StandardCharsets.UTF_8);
+    byte[] plain = text.getBytes(StandardCharsets.UTF_8);
+    try {
+      return encryptBytes(plain, password, iv, salt);
+    } finally {
+      Arrays.fill(plain, (byte) 0);
+    }
+  }
+
+  private static String encryptBytes(byte[] plain, char[] password, byte[] iv, byte[] salt) {
+    byte[] key = null;
     try {
       key = key(password, salt);
       byte[] encrypted = gcm(true, key, iv, plain, 0, plain.length),
@@ -47,7 +69,6 @@ public final class InlineCrypto {
     } catch (GeneralSecurityException e) {
       throw new IllegalArgumentException("Не удалось зашифровать текст", e);
     } finally {
-      Arrays.fill(plain, (byte) 0);
       if (key != null) Arrays.fill(key, (byte) 0);
     }
   }
@@ -57,32 +78,72 @@ public final class InlineCrypto {
       boolean encrypt, byte[] key, byte[] iv, byte[] input, int offset, int length)
       throws GeneralSecurityException {
     var cipher = GCMBlockCipher.newInstance(AESEngine.newInstance());
-    cipher.init(encrypt, new AEADParameters(new KeyParameter(key), 128, iv));
-    byte[] output = new byte[cipher.getOutputSize(length)];
+    var keyParameter = new KeyParameter(key);
+    byte[] output = null;
+    boolean returned = false;
     try {
+      cipher.init(encrypt, new AEADParameters(keyParameter, 128, iv));
+      output = new byte[cipher.getOutputSize(length)];
       int count = cipher.processBytes(input, offset, length, output, 0);
       count += cipher.doFinal(output, count);
-      return count == output.length ? output : Arrays.copyOf(output, count);
+      if (count != output.length) return Arrays.copyOf(output, count);
+      returned = true;
+      return output;
     } catch (InvalidCipherTextException error) {
-      Arrays.fill(output, (byte) 0);
       throw new GeneralSecurityException(error);
+    } finally {
+      Arrays.fill(keyParameter.getKey(), (byte) 0);
+      if (!returned && output != null) Arrays.fill(output, (byte) 0);
     }
   }
 
   public static String decrypt(String encoded, char[] password) {
-    byte[] key = null, plain = null;
+    byte[] plain = decryptBytes(encoded, password);
+    try {
+      return new String(plain, StandardCharsets.UTF_8);
+    } finally {
+      Arrays.fill(plain, (byte) 0);
+    }
+  }
+
+  /** Transfer the decoded password to the caller without creating immutable plaintext. */
+  static char[] decryptChars(String encoded, char[] password) {
+    byte[] plain = decryptBytes(encoded, password);
+    char[] scratch = null;
+    try {
+      // UTF-8 never needs more UTF-16 code units than input bytes.
+      scratch = new char[plain.length];
+      var chars = CharBuffer.wrap(scratch);
+      var decoder =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(CodingErrorAction.REPLACE)
+              .onUnmappableCharacter(CodingErrorAction.REPLACE);
+      decoder.decode(ByteBuffer.wrap(plain), chars, true);
+      decoder.flush(chars);
+      if (chars.position() != scratch.length) return Arrays.copyOf(scratch, chars.position());
+      char[] result = scratch;
+      scratch = null;
+      return result;
+    } finally {
+      Arrays.fill(plain, (byte) 0);
+      if (scratch != null) Arrays.fill(scratch, '\0');
+    }
+  }
+
+  /** Transfer the authenticated plaintext buffer to the caller, who must wipe it. */
+  static byte[] decryptBytes(String encoded, char[] password) {
+    byte[] key = null;
     try {
       byte[] payload = Base64.getDecoder().decode(encoded);
       if (payload.length < 48) throw new GeneralSecurityException("Truncated secret");
       key = key(password, Arrays.copyOfRange(payload, 16, 32));
-      plain = gcm(false, key, Arrays.copyOf(payload, 16), payload, 32, payload.length - 32);
-      return new String(plain, StandardCharsets.UTF_8);
+      return gcm(false, key, Arrays.copyOf(payload, 16), payload, 32, payload.length - 32);
     } catch (GeneralSecurityException | IllegalArgumentException e) {
       throw new IllegalArgumentException(
           "Не удалось расшифровать: неверный пароль или повреждённый secret", e);
     } finally {
       if (key != null) Arrays.fill(key, (byte) 0);
-      if (plain != null) Arrays.fill(plain, (byte) 0);
     }
   }
 }

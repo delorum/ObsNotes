@@ -13,6 +13,11 @@ public class InlineCryptoTest {
   static final String VECTOR =
       "EBESExQVFhcYGRobHB0eHwABAgMEBQYHCAkKCwwNDg+SvAKmNxt8xaF97m7ICV4XVx7HgryWtf4wjkW92N79rurW61mrEMLilDPJDAl/h6ZK8a4ppchW/hJgKZWsnBMokaiYxVRbCNcODRy47Pxakg7DSz+/iJlI1IHV2g80xSiogCA=";
 
+  private static void assertCachedPassword(PasswordSession session, String expected) {
+    assertTrue(
+        session.usePassword(password -> assertArrayEquals(expected.toCharArray(), password)));
+  }
+
   @Test
   public void decryptsActualWebCryptoVectorWithUnicodePasswordAndBlankLines() {
     assertEquals(CLEAR, InlineCrypto.decrypt(VECTOR, PASSWORD.toCharArray()));
@@ -62,10 +67,10 @@ public class InlineCryptoTest {
     assertFalse(wrapped.contains(PASSWORD));
     var session = new PasswordSession(() -> 0);
     session.unlock(wrapped, "0123");
-    assertArrayEquals(PASSWORD.toCharArray(), session.copy());
+    assertCachedPassword(session, PASSWORD);
     assertThrows(IllegalArgumentException.class, () -> session.unlock(wrapped, "0124"));
     session.close();
-    assertNull(session.copy());
+    assertFalse(session.isUnlocked());
   }
 
   @Test
@@ -74,10 +79,10 @@ public class InlineCryptoTest {
     var s = new PasswordSession(time::get);
     s.unlock(PasswordSession.create(PASSWORD, "1234"), "1234");
     time.addAndGet(179999);
-    assertNotNull(s.copy());
+    assertTrue(s.isUnlocked());
     assertEquals(1, s.remaining());
     time.incrementAndGet();
-    assertNull(s.copy());
+    assertFalse(s.isUnlocked());
     assertEquals(0, s.remaining());
   }
 
@@ -106,7 +111,7 @@ public class InlineCryptoTest {
       String wrapped = PasswordSession.create(PASSWORD, unlock);
       try (var session = new PasswordSession(() -> 0)) {
         session.unlock(wrapped, unlock);
-        assertArrayEquals(PASSWORD.toCharArray(), session.copy());
+        assertCachedPassword(session, PASSWORD);
       }
     }
   }
@@ -115,7 +120,7 @@ public class InlineCryptoTest {
   public void legacyFourDigitWrappedPasswordStillUnlocks() {
     try (var session = new PasswordSession(() -> 0)) {
       session.unlock(LEGACY_WRAPPED, "0123");
-      assertArrayEquals(LEGACY_MASTER.toCharArray(), session.copy());
+      assertCachedPassword(session, LEGACY_MASTER);
     }
   }
 
@@ -126,7 +131,7 @@ public class InlineCryptoTest {
     assertNotEquals(LEGACY_WRAPPED, changed);
     try (var session = new PasswordSession(() -> 0)) {
       session.unlock(changed, key);
-      assertArrayEquals(LEGACY_MASTER.toCharArray(), session.copy());
+      assertCachedPassword(session, LEGACY_MASTER);
       assertThrows(IllegalArgumentException.class, () -> session.unlock(changed, "0123"));
     }
   }
@@ -136,7 +141,7 @@ public class InlineCryptoTest {
     String changed = PasswordSession.change(LEGACY_WRAPPED, "0123", "New master 🌲", false);
     try (var session = new PasswordSession(() -> 0)) {
       session.unlock(changed, "0123");
-      assertArrayEquals("New master 🌲".toCharArray(), session.copy());
+      assertCachedPassword(session, "New master 🌲");
     }
     assertEquals(LEGACY_MASTER, InlineCrypto.decrypt(LEGACY_WRAPPED, "0123".toCharArray()));
   }
@@ -145,14 +150,14 @@ public class InlineCryptoTest {
   public void activeSessionCannotBypassTheCurrentPincodeForCredentialChanges() {
     try (var session = new PasswordSession(() -> 0)) {
       session.unlock(LEGACY_WRAPPED, "0123");
-      assertNotNull(session.copy());
+      assertTrue(session.isUnlocked());
       assertThrows(
           IllegalArgumentException.class,
           () -> PasswordSession.change(LEGACY_WRAPPED, "wrong current", "New unlock", true));
       assertThrows(
           IllegalArgumentException.class,
           () -> PasswordSession.change(LEGACY_WRAPPED, "wrong current", "New master", false));
-      assertArrayEquals(LEGACY_MASTER.toCharArray(), session.copy());
+      assertCachedPassword(session, LEGACY_MASTER);
     }
   }
 
@@ -164,7 +169,7 @@ public class InlineCryptoTest {
       for (String other : List.of(key.strip(), key.toUpperCase(Locale.ROOT), " secret é "))
         assertThrows(IllegalArgumentException.class, () -> session.unlock(wrapped, other));
       session.unlock(wrapped, key);
-      assertArrayEquals(PASSWORD.toCharArray(), session.copy());
+      assertCachedPassword(session, PASSWORD);
     }
   }
 }

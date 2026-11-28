@@ -1,6 +1,7 @@
 package ru.obsnotes;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /** Fixed three-minute lifetime from successful password unlock, using a monotonic clock. */
@@ -29,49 +30,88 @@ public final class PasswordSession implements AutoCloseable {
     }
   }
 
-  /**
-   * Credential changes always authenticate the supplied old credential, even with an active
-   * session.
-   */
+  /** Credential changes always authenticate the supplied old credential. */
   public static String change(
       String wrapped, String currentUnlockPassword, String value, boolean unlockOnly) {
-    validateUnlockPassword(currentUnlockPassword);
     if (unlockOnly) validateUnlockPassword(value);
     else if (value.isEmpty()) throw new IllegalArgumentException("Введите пароль");
-    char[] current = currentUnlockPassword.toCharArray();
-    String clear;
-    try {
-      clear = InlineCrypto.decrypt(wrapped, current);
-    } catch (IllegalArgumentException error) {
-      throw new IllegalArgumentException("Неверный старый пинкод", error);
-    } finally {
-      Arrays.fill(current, '\0');
+    byte[] clear = unwrapBytes(wrapped, currentUnlockPassword, "Неверный старый пинкод");
+    if (!unlockOnly) {
+      Arrays.fill(clear, (byte) 0);
+      return create(value, currentUnlockPassword);
     }
-    return create(unlockOnly ? clear : value, unlockOnly ? value : currentUnlockPassword);
+    char[] next = null;
+    try {
+      next = value.toCharArray();
+      return InlineCrypto.encryptBytes(clear, next);
+    } finally {
+      Arrays.fill(clear, (byte) 0);
+      if (next != null) Arrays.fill(next, '\0');
+    }
   }
 
-  public synchronized void unlock(String wrapped, String unlockPassword) {
+  public static void verify(String wrapped, String unlockPassword) {
+    Arrays.fill(unwrapBytes(wrapped, unlockPassword, "Неверный пинкод"), (byte) 0);
+  }
+
+  private static byte[] unwrapBytes(String wrapped, String unlockPassword, String errorMessage) {
     validateUnlockPassword(unlockPassword);
-    char[] p = unlockPassword.toCharArray();
+    char[] key = unlockPassword.toCharArray();
     try {
-      String clear = InlineCrypto.decrypt(wrapped, p);
-      close();
-      password = clear.toCharArray();
-      deadline = clock.getAsLong() + LIFETIME_MS;
-    } catch (IllegalArgumentException e) {
-      throw new IllegalArgumentException("Неверный пинкод", e);
+      return InlineCrypto.decryptBytes(wrapped, key);
+    } catch (IllegalArgumentException error) {
+      throw new IllegalArgumentException(errorMessage, error);
     } finally {
-      Arrays.fill(p, '\0');
+      Arrays.fill(key, '\0');
     }
   }
 
-  public synchronized char[] copy() {
-    if (password != null && clock.getAsLong() >= deadline) close();
-    return password == null ? null : password.clone();
+  public void unlock(String wrapped, String unlockPassword) {
+    validateUnlockPassword(unlockPassword);
+    char[] key = unlockPassword.toCharArray();
+    char[] clear = null;
+    try {
+      clear = InlineCrypto.decryptChars(wrapped, key);
+      synchronized (this) {
+        long expires = clock.getAsLong() + LIFETIME_MS;
+        close();
+        password = clear;
+        deadline = expires;
+        clear = null;
+      }
+    } catch (IllegalArgumentException error) {
+      throw new IllegalArgumentException("Неверный пинкод", error);
+    } finally {
+      Arrays.fill(key, '\0');
+      if (clear != null) Arrays.fill(clear, '\0');
+    }
+  }
+
+  public boolean isUnlocked() {
+    return remaining() > 0;
+  }
+
+  /** The operation borrows a fresh copy only for its duration. */
+  public boolean usePassword(Consumer<char[]> operation) {
+    char[] working;
+    synchronized (this) {
+      if (!isUnlocked()) return false;
+      working = password.clone();
+    }
+    try {
+      operation.accept(working);
+      return true;
+    } finally {
+      Arrays.fill(working, '\0');
+    }
   }
 
   public synchronized long remaining() {
-    return password == null ? 0 : Math.max(0, deadline - clock.getAsLong());
+    if (password == null) return 0;
+    long time = deadline - clock.getAsLong();
+    if (time > 0) return time;
+    close();
+    return 0;
   }
 
   @Override

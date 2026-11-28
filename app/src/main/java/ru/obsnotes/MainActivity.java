@@ -21,10 +21,15 @@ public final class MainActivity extends AppCompatActivity {
   private UsageHistory usage;
   private SectionVisibilityPrefs sectionVisibility;
   private PasswordStore passwords;
-  private final Runnable expirePassword =
-      () -> {
-        if (passwords != null) passwords.close();
-      };
+  private final Runnable expirePassword = this::schedulePasswordExpiry;
+
+  private void schedulePasswordExpiry() {
+    handler.removeCallbacks(expirePassword);
+    // The Handler clock pauses in deep sleep. The session uses elapsedRealtime.
+    long remaining = passwords.session.remaining();
+    if (remaining > 0) handler.postDelayed(expirePassword, remaining);
+  }
+
   private SafVaultStorage storage;
   private VaultRepository repository;
   private DiaryIndex index = new DiaryIndex();
@@ -137,6 +142,7 @@ public final class MainActivity extends AppCompatActivity {
   @Override
   protected void onResume() {
     super.onResume();
+    schedulePasswordExpiry();
     foreground = true;
     if (conflictPending && editor != null) showConflict();
     handler.postDelayed(poll, 1000);
@@ -1504,35 +1510,28 @@ public final class MainActivity extends AppCompatActivity {
     }
     EditorState owner = editor;
     int part = owner.parts == null ? -1 : owner.parts.selected;
+    String selectedVault = vault;
     Runnable apply =
-        () -> {
-          char[] password = passwords.session.copy();
-          if (password == null) {
-            ui.error("Введите пинкод снова");
-            return;
-          }
-          work(
-              () -> {
-                try {
-                  if (owner.parts != null) owner.parts.toggleSecret(part, password);
-                  else owner.toggleSecret(password, template);
-                  recovery.save(owner, vault);
+        () ->
+            work(
+                () -> {
+                  boolean used =
+                      passwords.session.usePassword(
+                          password -> {
+                            if (owner.parts != null) owner.parts.toggleSecret(part, password);
+                            else owner.toggleSecret(password, template);
+                          });
+                  if (!used) throw new IllegalArgumentException("Введите пинкод снова");
+                  recovery.save(owner, selectedVault);
                   return true;
-                } finally {
-                  Arrays.fill(password, '\0');
-                }
-              },
-              ok -> {
-                if (editor == owner) showEditor();
-              });
-        };
-    char[] cached = passwords.session.copy();
-    if (cached != null) {
-      Arrays.fill(cached, '\0');
+                },
+                ok -> {
+                  if (editor == owner) showEditor();
+                });
+    if (passwords.session.isUnlocked()) {
       apply.run();
       return;
     }
-    String selectedVault = vault;
     PasswordDialogs.unlock(
         ui,
         unlockPassword ->
@@ -1543,8 +1542,7 @@ public final class MainActivity extends AppCompatActivity {
                   return true;
                 },
                 ok -> {
-                  handler.removeCallbacks(expirePassword);
-                  handler.postDelayed(expirePassword, passwords.session.remaining());
+                  schedulePasswordExpiry();
                   if (editor == owner && vault.equals(selectedVault)) apply.run();
                 }));
   }

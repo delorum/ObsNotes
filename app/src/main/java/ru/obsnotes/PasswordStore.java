@@ -46,12 +46,7 @@ public final class PasswordStore implements AutoCloseable {
   }
 
   public void delete(String vault, String oldUnlockPassword) {
-    PasswordSession check = new PasswordSession(SystemClock::elapsedRealtime);
-    try {
-      check.unlock(prefs.getString(key(vault), ""), oldUnlockPassword);
-    } finally {
-      check.close();
-    }
+    PasswordSession.verify(prefs.getString(key(vault), ""), oldUnlockPassword);
     if (!prefs.edit().remove(key(vault)).commit())
       throw new IllegalArgumentException("Не удалось удалить пароль");
     close();
